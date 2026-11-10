@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from ai_japanese_interview_assistant.transcription import TranscriptBook, TurnCutter, run_transcription
+from ai_japanese_interview_assistant.transcription import AudioProcessor, TranscriptBook, TurnCutter, run_transcription
 
 
 def test_finals_replace_deltas_and_remain_in_commit_order():
@@ -30,6 +30,23 @@ def test_silence_is_ignored_and_speech_is_committed_after_tail():
         assert cutter.push(silence, False) == [silence]
     assert cutter.push(silence, False) == [silence, None]
     assert cutter.finish() == []
+
+
+def test_twenty_seconds_of_continuous_speech_is_committed():
+    cutter = TurnCutter()
+    speech = b"\x01\x00" * 480
+    for _ in range(999):
+        assert cutter.push(speech, True) == [speech]
+    assert cutter.push(speech, True) == [speech, None]
+    assert cutter.push(speech, True) == [speech]
+
+
+def test_stereo_silence_stays_silent_after_real_resampling():
+    processor = AudioProcessor(44100, 2)
+    for _ in range(40):
+        assert processor.push(bytes(3528)) == []
+    assert processor.push(b"", last=True) == []
+    assert processor.finish_turn() == []
 
 
 def test_websocket_appends_pcm_and_waits_for_final_after_commit():

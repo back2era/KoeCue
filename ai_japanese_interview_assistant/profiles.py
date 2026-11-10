@@ -90,9 +90,12 @@ class ProfileStore:
 
 
 def select_facts(authorized, question, categories):
-    relevant = [fact for fact in authorized if fact.category in categories]
     normalized = question.casefold()
-    relevant.sort(
-        key=lambda fact: -sum(bool(tag) and tag.casefold() in normalized for tag in fact.tags),
-    )
-    return tuple(relevant[:2])
+    ranked = []
+    for fact in authorized:
+        if fact.category in categories:
+            matches = sum(bool(tag) and tag.casefold() in normalized for tag in fact.tags)
+            if matches or not fact.tags:
+                ranked.append((matches, fact))
+    ranked.sort(key=lambda entry: -entry[0])
+    return tuple(fact for _, fact in ranked[:2])

@@ -37,6 +37,8 @@ class CloudPane(QWidget):
         self.vault_operation = ""
         self.approved_facts = ()
         self.generation = 0
+        self.session_id = 0
+        self.capture_available = True
         self.state = "idle"
         self.closing = False
         self.rows = {}
@@ -66,7 +68,8 @@ class CloudPane(QWidget):
         self.copy = QPushButton("复制双语回答")
         self.asr_status = QLabel("转写未连接")
         self.text_status = QLabel("文本 API 未连接")
-        for label in (self.asr_status, self.text_status):
+        self.audio_status = QLabel("音频未打开")
+        for label in (self.asr_status, self.text_status, self.audio_status):
             label.setWordWrap(True)
         self.history = QTableWidget(0, 3)
         self.history.setHorizontalHeaderLabels(["日语原文", "简体中文", "状态"])
@@ -108,6 +111,7 @@ class CloudPane(QWidget):
         layout.addLayout(buttons)
         layout.addWidget(self.asr_status)
         layout.addWidget(self.text_status)
+        layout.addWidget(self.audio_status)
         layout.addWidget(self.history, 3)
         layout.addWidget(details, 2)
         answer_actions = QHBoxLayout()
@@ -174,24 +178,27 @@ class CloudPane(QWidget):
         self.revoke.setEnabled(bool(self.approved_facts))
         self.profile_status.setText(f"本次授权 {len(self.approved_facts)} 条资料" if self.approved_facts else "本次未授权资料分享")
         allowed = bool(self.consent.isChecked() and self.source.currentData() and self.api_key())
-        self.start.setEnabled(idle and allowed)
+        self.start.setEnabled(idle and allowed and self.capture_available)
         self.start.setText("恢复云端监听" if self.state == "paused" else "开始云端监听")
         self.pause.setEnabled(self.state == "active")
         self.stop.setEnabled(self.state in {"active", "paused"})
-        _, row = self.current_row()
-        retryable = row and row.finalized and row.translation not in {"翻译中", "已翻译"}
-        self.retry.setEnabled(bool(self.state == "active" and retryable))
-        self.suggest.setEnabled(bool(self.state == "active" and row and row.finalized and
+        key, row = self.current_row()
+        retryable = row and row.finalized and row.ja and row.translation not in {"翻译中", "已翻译"}
+        self.retry.setEnabled(bool(self.can_send_row(key) and retryable))
+        self.suggest.setEnabled(bool(self.can_send_row(key) and row and row.finalized and
                                      row.ja and row.answer_status != "正在检查问题…"))
         self.copy.setEnabled(bool(row and row.answer))
 
     def start_session(self):
         if not self.start.isEnabled():
             return
+        if self.state != "paused":
+            self.session_id += 1
         self.generation += 1
         self.state = "active"
         self.worker = LiveWorker(self.generation, self.source.currentData(), self.api_key(), self,
-                                 auto_answer=self.auto_answer.isChecked(), facts=self.approved_facts)
+                                 session_id=self.session_id, auto_answer=self.auto_answer.isChecked(),
+                                 facts=self.approved_facts)
         self.worker.status.connect(self.set_status)
         self.worker.transcript.connect(self.add_transcript)
         self.worker.order.connect(self.set_order)
@@ -203,7 +210,8 @@ class CloudPane(QWidget):
 
     def set_status(self, service, value):
         if self.state == "active":
-            (self.asr_status if service == "asr" else self.text_status).setText(value)
+            statuses = {"asr": self.asr_status, "text": self.text_status, "audio": self.audio_status}
+            statuses[service].setText(value)
 
     def pause_session(self):
         if self.worker is not None:
@@ -211,6 +219,7 @@ class CloudPane(QWidget):
             self.worker.stop()
             self.asr_status.setText("已暂停")
             self.text_status.setText("文本请求已暂停")
+            self.audio_status.setText("音频已暂停")
             self.controls()
 
     def stop_session(self):
@@ -222,6 +231,7 @@ class CloudPane(QWidget):
         self.approved_facts = ()
         self.asr_status.setText("已停止")
         self.text_status.setText("文本 API 未连接")
+        self.audio_status.setText("音频未打开")
         self.controls()
 
     def worker_finished(self):
@@ -232,6 +242,8 @@ class CloudPane(QWidget):
             self.consent.setChecked(False)
             self.auto_answer.setChecked(False)
             self.approved_facts = ()
+            if self.audio_status.text().startswith(("正在打开", "音频 ·")):
+                self.audio_status.setText("音频已停止")
         for row in self.rows.values():
             if not row.finalized and row.asr != "转写失败":
                 row.asr = "转写已中断"
@@ -268,8 +280,9 @@ class CloudPane(QWidget):
         row.zh, row.translation = text, state
         self.dirty = True
 
-    def add_answer(self, key, answer, state):
-        if self.state == "active" and key in self.rows:
+    @Slot(object, object, str, bool)
+    def add_answer(self, key, answer, state, scoped):
+        if self.can_send_row(key) and key in self.rows and (not scoped or self.approved_facts):
             row = self.rows[key]
             row.answer, row.answer_status = answer, state
             self.dirty = True
@@ -281,14 +294,17 @@ class CloudPane(QWidget):
             return key, self.rows.get(key)
         return None, None
 
+    def can_send_row(self, key):
+        return self.state == "active" and key is not None and key[0] == self.session_id
+
     def retry_translation(self):
         key, row = self.current_row()
-        if self.worker is not None and row and row.finalized:
+        if self.worker is not None and self.can_send_row(key) and row and row.finalized and row.ja:
             self.worker.dispatch(self.worker.start_translation, key, row.ja)
 
     def request_answer(self):
         key, row = self.current_row()
-        if self.worker is not None and row and row.finalized and row.ja:
+        if self.worker is not None and self.can_send_row(key) and row and row.finalized and row.ja:
             self.worker.dispatch(self.worker.start_answer, key, row.ja)
 
     def copy_answer(self):
@@ -311,6 +327,10 @@ class CloudPane(QWidget):
         self.set_approved(())
         if self.worker is not None:
             self.worker.revoke_profile()
+            for row in self.rows.values():
+                if row.answer_status == "正在检查问题…":
+                    row.answer_status = "回答已取消"
+            self.dirty = True
 
     def use_vault(self, operation):
         if self.credential_worker is not None:
@@ -345,19 +365,23 @@ class CloudPane(QWidget):
             return
         self.dirty = False
         selected, _ = self.current_row()
+        following_latest = not self.rendered or selected == self.rendered[-1]
         scroll = self.history.verticalScrollBar()
         at_end = scroll.value() == scroll.maximum()
         self.history.blockSignals(True)
         self.rendered = list(self.rows)
         self.history.setRowCount(len(self.rendered))
         for index, row in enumerate(self.rows.values()):
-            for column, value in enumerate((row.ja, row.zh, " · ".join(filter(None, (row.asr, row.translation))))):
+            statuses = " · ".join(filter(None, (row.asr, row.translation, row.answer_status)))
+            for column, value in enumerate((row.ja, row.zh, statuses)):
                 cell = self.history.item(index, column)
                 if cell is None:
                     self.history.setItem(index, column, QTableWidgetItem(value))
                 elif cell.text() != value:
                     cell.setText(value)
-        if selected in self.rows:
+        if at_end and following_latest and self.rendered:
+            self.history.selectRow(len(self.rendered) - 1)
+        elif selected in self.rows:
             self.history.selectRow(self.rendered.index(selected))
         elif self.rendered:
             self.history.selectRow(len(self.rendered) - 1)

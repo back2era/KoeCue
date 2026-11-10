@@ -7,7 +7,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from .audio import AudioBuffer, AudioError, capture, list_devices, pcm_level
+from .audio import AudioBuffer, AudioError, capture, check_topology, list_devices, pcm_level
+from .telemetry import Event, record
 
 
 class DeviceScan(QThread):
@@ -17,6 +18,8 @@ class DeviceScan(QThread):
     def run(self):
         try:
             self.result.emit(list_devices())
+        except AudioError as exc:
+            self.failed.emit(str(exc))
         except (ImportError, OSError, RuntimeError, ValueError):
             self.failed.emit("无法枚举 WASAPI 设备。请检查音频服务和 PyAudioWPatch 安装。")
 
@@ -36,14 +39,18 @@ class MeterWorker(QThread):
         self.buffer.close()
 
     def run(self):
+        started = None
         try:
             if self.isInterruptionRequested():
                 return
             with capture(self.device, self.buffer) as stream:
+                started = monotonic()
+                record(Event.AUDIO_OPEN)
                 self.ready.emit()
                 samples = 0
                 level = 0
                 next_update = monotonic()
+                next_topology = next_update + 1
                 while not self.isInterruptionRequested():
                     pcm = self.buffer.pop()
                     if pcm is None:
@@ -57,10 +64,19 @@ class MeterWorker(QThread):
                         self.metered.emit(level, samples)
                         level = 0
                         next_update = monotonic() + 0.1
+                    if monotonic() >= next_topology:
+                        check_topology(self.device)
+                        next_topology = monotonic() + 1
         except AudioError as exc:
+            if not self.isInterruptionRequested():
+                record(Event.AUDIO_ERROR)
             self.failed.emit(str(exc))
         except (ImportError, OSError, RuntimeError, ValueError):
+            record(Event.AUDIO_ERROR)
             self.failed.emit("无法读取所选设备。请检查 Windows 声音设置并刷新列表。")
+        finally:
+            if started is not None:
+                record(Event.AUDIO_CLOSE, monotonic() - started)
 
 
 class DiagnosticPane(QWidget):
@@ -72,6 +88,7 @@ class DiagnosticPane(QWidget):
         self.worker = None
         self.state = "idle"
         self.closing = False
+        self.capture_available = True
         self.device = QComboBox()
         self.refresh = QPushButton("刷新设备")
         self.start = QPushButton("开始本地诊断")
@@ -115,7 +132,8 @@ class DiagnosticPane(QWidget):
         self.device.setEnabled(selectable and self.state != "paused")
         self.refresh.setEnabled(selectable and self.state != "paused")
         self.consent.setEnabled(selectable and self.state != "paused")
-        self.start.setEnabled(selectable and self.consent.isChecked() and self.device.currentData() is not None)
+        self.start.setEnabled(selectable and self.capture_available and self.consent.isChecked()
+                              and self.device.currentData() is not None)
         self.start.setText("恢复监听" if self.state == "paused" else "开始本地诊断")
         self.pause.setEnabled(self.state == "running")
         self.stop.setEnabled(self.state in {"starting", "running", "paused"})
@@ -149,7 +167,7 @@ class DiagnosticPane(QWidget):
 
     def start_capture(self):
         device = self.device.currentData()
-        if device is None or not self.consent.isChecked() or self.worker is not None:
+        if not self.start.isEnabled():
             return
         self.state = "starting"
         self.meter.setValue(0)

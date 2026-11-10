@@ -5,9 +5,10 @@ from time import monotonic
 
 from PySide6.QtCore import QThread, Signal
 
-from .audio import AudioBuffer, AudioError, capture
+from .audio import AudioBuffer, AudioError, capture, check_topology
 from .interview import InterviewService
 from .services import TextService, client_for, error_message
+from .telemetry import Event as LogEvent, record
 from .transcription import AudioProcessor, RealtimeError, TranscriptBook, run_transcription
 
 
@@ -16,11 +17,12 @@ class LiveWorker(QThread):
     transcript = Signal(object)
     order = Signal(object)
     translation = Signal(object, str, str)
-    answer = Signal(object, object, str)
+    answer = Signal(object, object, str, bool)
 
-    def __init__(self, generation, device, key, parent=None, *, auto_answer=False, facts=()):
+    def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False, facts=()):
         super().__init__(parent)
         self.generation = generation
+        self.session_id = session_id
         self.device = device
         self.key = key
         self.auto_answer = auto_answer
@@ -64,9 +66,15 @@ class LiveWorker(QThread):
             asyncio.run(self._main())
         except asyncio.CancelledError:
             pass
-        except (AudioError, RealtimeError) as exc:
+        except AudioError as exc:
+            record(LogEvent.AUDIO_ERROR)
+            self.status.emit("audio", str(exc))
+            self.status.emit("asr", "转写连接已关闭")
+        except RealtimeError as exc:
+            record(LogEvent.API_ERROR)
             self.status.emit("asr", str(exc))
         except Exception as exc:
+            record(LogEvent.API_ERROR)
             self.status.emit("asr", error_message(exc))
         finally:
             self.buffer.close()
@@ -82,26 +90,44 @@ class LiveWorker(QThread):
         async with client_for(self.key) as client:
             self.service = TextService(client)
             self.interview = InterviewService(self.service)
+            started = monotonic()
             try:
                 self.status.emit("asr", "正在连接转写服务…")
+
+                def connected():
+                    record(LogEvent.REALTIME_READY, monotonic() - started)
+                    self.status.emit("asr", "转写 API 已连接")
+
                 await run_transcription(
-                    self.key, self.audio_commands(), self.on_event,
-                    lambda: self.status.emit("asr", "API 已连接，正在打开音频…"),
+                    self.key, self.audio_commands(), self.on_event, connected,
+                    on_ending=self.stop_text_and_audio,
                 )
             finally:
-                for task in self.jobs.values():
-                    task.cancel()
+                self.stop_text_and_audio()
                 await asyncio.gather(*self.jobs.values(), return_exceptions=True)
+                record(LogEvent.REALTIME_END, monotonic() - started)
+
+    def stop_text_and_audio(self):
+        self.requestInterruption()
+        self.buffer.close()
+        for task in self.jobs.values():
+            task.cancel()
 
     async def audio_commands(self):
+        self.status.emit("audio", "正在打开音频设备…")
         processor = AudioProcessor(self.device.rate, self.device.channels)
         with capture(self.device, self.buffer) as stream:
             if self.isInterruptionRequested():
                 return
-            self.status.emit("asr", "转写已连接 · 正在监听")
+            record(LogEvent.AUDIO_OPEN)
+            self.status.emit("audio", "音频 · 正在监听")
             last_frame = monotonic()
+            next_topology = last_frame + 1
             flushed = False
             while not self.isInterruptionRequested():
+                if monotonic() >= next_topology:
+                    check_topology(self.device)
+                    next_topology = monotonic() + 1
                 pcm = self.buffer.pop()
                 if pcm is None:
                     if not stream.is_active():
@@ -110,9 +136,12 @@ class LiveWorker(QThread):
                         for command in processor.finish_turn():
                             yield command
                         flushed = True
+                        self.status.emit("audio", "音频 · 当前没有输入帧")
                     await asyncio.sleep(0.01)
                     continue
                 last_frame = monotonic()
+                if flushed:
+                    self.status.emit("audio", "音频 · 正在监听")
                 flushed = False
                 for command in processor.push(pcm):
                     if self.isInterruptionRequested():
@@ -124,10 +153,10 @@ class LiveWorker(QThread):
         part = self.book.apply(event)
         if part is None:
             return
-        row_id = (self.generation, part.item_id)
+        row_id = (self.session_id, self.generation, part.item_id)
         self.transcript.emit((row_id, part))
         if kind == "input_audio_buffer.committed":
-            self.order.emit(tuple((self.generation, part.item_id) for part in self.book.parts))
+            self.order.emit(tuple((self.session_id, self.generation, part.item_id) for part in self.book.parts))
         elif kind.endswith("transcription.completed") and part.text:
             self.start_translation(row_id, part.text)
             if self.auto_answer:
@@ -149,9 +178,12 @@ class LiveWorker(QThread):
 
     async def translate(self, row_id, text):
         result = ""
+        started = monotonic()
         self.translation.emit(row_id, result, "翻译中")
         self.status.emit("text", "正在翻译…")
         try:
+            if self.isInterruptionRequested():
+                raise asyncio.CancelledError
             async for delta in self.service.translate(text):
                 result += delta
                 self.translation.emit(row_id, result, "翻译中")
@@ -159,27 +191,36 @@ class LiveWorker(QThread):
             self.translation.emit(row_id, result, "翻译已取消")
             raise
         except Exception as exc:
+            record(LogEvent.API_ERROR)
             self.translation.emit(row_id, result, "翻译失败")
             self.status.emit("text", error_message(exc))
         else:
+            record(LogEvent.TRANSLATION_READY, monotonic() - started)
             self.translation.emit(row_id, result, "已翻译")
             self.status.emit("text", "文本 API 已连接")
 
     def start_answer(self, row_id, text, automatic=False):
         if len(self.jobs) >= 8:
-            self.answer.emit(row_id, None, "回答队列繁忙，可以重试")
+            self.answer.emit(row_id, None, "回答队列繁忙，可以重试", False)
             return
         self.start_job(("answer", row_id), self.suggest, row_id, text, automatic)
 
     async def suggest(self, row_id, text, automatic):
-        self.answer.emit(row_id, None, "正在检查问题…")
+        facts = () if self.sharing_revoked.is_set() else self.facts
+        started = monotonic()
+
+        def allowed():
+            return not self.isInterruptionRequested() and (not facts or not self.sharing_revoked.is_set())
+
+        self.answer.emit(row_id, None, "正在检查问题…", bool(facts))
         try:
-            facts = () if self.sharing_revoked.is_set() else self.facts
-            answer = await self.interview.suggest(text, automatic=automatic, facts=facts)
+            answer = await self.interview.suggest(text, automatic=automatic, facts=facts, allowed=allowed)
         except asyncio.CancelledError:
-            self.answer.emit(row_id, None, "回答已取消")
+            self.answer.emit(row_id, None, "回答已取消", bool(facts))
             raise
         except Exception as exc:
-            self.answer.emit(row_id, None, error_message(exc))
+            self.answer.emit(row_id, None, error_message(exc), bool(facts))
         else:
-            self.answer.emit(row_id, answer, "回答已生成" if answer else "无需自动回答")
+            if answer:
+                record(LogEvent.ANSWER_READY, monotonic() - started)
+            self.answer.emit(row_id, answer, "回答已生成" if answer else "无需自动回答", bool(facts))

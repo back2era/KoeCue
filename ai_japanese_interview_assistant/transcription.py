@@ -134,7 +134,7 @@ class AudioProcessor:
         return self._cutter.finish()
 
 
-async def run_transcription(key, frames, on_event, on_ready=lambda: None, *, connect=None):
+async def run_transcription(key, frames, on_event, on_ready=lambda: None, *, connect=None, on_ending=lambda: None):
     """Send frames and emit provider events until input ends or the task is cancelled."""
     if connect is None:
         from websockets.asyncio.client import connect
@@ -208,6 +208,7 @@ async def run_transcription(key, frames, on_event, on_ready=lambda: None, *, con
             for task in done:
                 task.result()
         finally:
+            on_ending()
             send_task.cancel()
             receive_task.cancel()
             await asyncio.gather(send_task, receive_task, return_exceptions=True)
