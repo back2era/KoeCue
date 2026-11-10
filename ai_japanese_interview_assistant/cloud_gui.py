@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from .diagnostic import DeviceScan
+from .config import OPENAI, PROVIDERS
 from .credentials import credential
 from .interview import Answer
 from .live import LiveWorker
@@ -35,6 +36,7 @@ class CloudPane(QWidget):
         self.scan = None
         self.credential_worker = None
         self.vault_operation = ""
+        self.vault_provider = None
         self.approved_facts = ()
         self.generation = 0
         self.session_id = 0
@@ -47,6 +49,10 @@ class CloudPane(QWidget):
 
         self.source = QComboBox()
         self.refresh = QPushButton("刷新设备")
+        self.provider = QComboBox()
+        self.provider.setAccessibleName("API 服务商")
+        for code, provider in PROVIDERS.items():
+            self.provider.addItem(provider.label, code)
         self.key = QLineEdit()
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
         self.key.setPlaceholderText("API Key · 仅在本次运行使用")
@@ -58,7 +64,9 @@ class CloudPane(QWidget):
         self.profile = QPushButton("编辑资料 / 本次授权")
         self.revoke = QPushButton("撤销资料分享")
         self.profile_status = QLabel("本次未授权资料分享")
-        self.consent = QCheckBox("已取得必要同意，允许将所选来源的音频及转写发送至 OpenAI")
+        self.consent = QCheckBox()
+        self.local_hint = QLabel("首次使用本地语音需按 README 安装组件并下载日语模型。")
+        self.local_hint.setWordWrap(True)
         self.auto_answer = QCheckBox("为本次会话自动识别问题并生成回答建议")
         self.start = QPushButton("开始云端监听")
         self.pause = QPushButton("暂停")
@@ -95,9 +103,12 @@ class CloudPane(QWidget):
         source.addWidget(self.refresh)
         layout.addLayout(source)
         key_row = QHBoxLayout()
+        key_row.addWidget(QLabel("服务商"))
+        key_row.addWidget(self.provider)
         key_row.addWidget(self.key, 1)
         key_row.addWidget(self.vault_button)
         layout.addLayout(key_row)
+        layout.addWidget(self.local_hint)
         profile_row = QHBoxLayout()
         profile_row.addWidget(self.profile)
         profile_row.addWidget(self.revoke)
@@ -127,6 +138,7 @@ class CloudPane(QWidget):
         self.render_timer.start()
         self.refresh.clicked.connect(self.refresh_devices)
         self.source.currentIndexChanged.connect(self.source_changed)
+        self.provider.currentIndexChanged.connect(self.provider_changed)
         self.consent.toggled.connect(self.controls)
         self.key.textChanged.connect(self.controls)
         self.start.clicked.connect(self.start_session)
@@ -138,6 +150,7 @@ class CloudPane(QWidget):
         self.profile.clicked.connect(self.open_profile)
         self.revoke.clicked.connect(self.revoke_profile)
         self.history.itemSelectionChanged.connect(self.select_row)
+        self.provider_changed()
         self.refresh_devices()
 
     def source_changed(self):
@@ -168,18 +181,41 @@ class CloudPane(QWidget):
         self.idle.emit()
 
     def api_key(self):
-        return self.key.text().strip() or os.environ.get("OPENAI_API_KEY", "").strip()
+        return self.key.text().strip() or os.environ.get(self.selected_provider().key_env, "").strip()
+
+    def selected_provider(self):
+        return PROVIDERS[self.provider.currentData()]
+
+    def provider_changed(self):
+        if self.state != "idle":
+            self.stop_session()
+        provider = self.selected_provider()
+        self.key.clear()
+        self.consent.setChecked(False)
+        self.auto_answer.setChecked(False)
+        self.approved_facts = ()
+        self.key.setPlaceholderText(f"{provider.label} API Key · 仅在本次运行使用")
+        self.local_hint.setVisible(provider is not OPENAI)
+        self.consent.setText(
+            "已取得必要同意，允许将所选来源的音频及转写发送至 OpenAI"
+            if provider is OPENAI else
+            f"已取得必要同意。音频在本机转写，日语文字及单独授权的资料可发送至 {provider.label}"
+        )
+        self.asr_status.setText("转写未连接" if provider is OPENAI else "本地日语转写未启动")
+        self.text_status.setText(f"{provider.label} 文本 API 未连接")
+        self.controls()
 
     def controls(self):
         idle = self.worker is None and self.scan is None and self.credential_worker is None and not self.closing
         configurable = idle and self.state != "paused"
-        for widget in (self.source, self.refresh, self.key, self.vault_button, self.consent, self.auto_answer, self.profile):
+        for widget in (self.source, self.refresh, self.provider, self.key, self.vault_button, self.consent, self.auto_answer, self.profile):
             widget.setEnabled(configurable)
         self.revoke.setEnabled(bool(self.approved_facts))
         self.profile_status.setText(f"本次授权 {len(self.approved_facts)} 条资料" if self.approved_facts else "本次未授权资料分享")
         allowed = bool(self.consent.isChecked() and self.source.currentData() and self.api_key())
         self.start.setEnabled(idle and allowed and self.capture_available)
-        self.start.setText("恢复云端监听" if self.state == "paused" else "开始云端监听")
+        mode = "云端监听" if self.selected_provider() is OPENAI else "本地转写"
+        self.start.setText(("恢复" if self.state == "paused" else "开始") + mode)
         self.pause.setEnabled(self.state == "active")
         self.stop.setEnabled(self.state in {"active", "paused"})
         key, row = self.current_row()
@@ -198,7 +234,7 @@ class CloudPane(QWidget):
         self.state = "active"
         self.worker = LiveWorker(self.generation, self.source.currentData(), self.api_key(), self,
                                  session_id=self.session_id, auto_answer=self.auto_answer.isChecked(),
-                                 facts=self.approved_facts)
+                                 facts=self.approved_facts, provider=self.selected_provider())
         self.worker.status.connect(self.set_status)
         self.worker.transcript.connect(self.add_transcript)
         self.worker.order.connect(self.set_order)
@@ -336,8 +372,10 @@ class CloudPane(QWidget):
         if self.credential_worker is not None:
             return
         key = self.key.text().strip() if operation == "save" else ""
+        provider = self.selected_provider()
         self.vault_operation = operation
-        self.credential_worker = PrivateIO(lambda: credential(operation, key), self)
+        self.vault_provider = provider
+        self.credential_worker = PrivateIO(lambda: credential(operation, key, provider), self)
         self.credential_worker.result.connect(self.vault_result)
         self.credential_worker.failed.connect(self.text_status.setText)
         self.credential_worker.finished.connect(self.vault_finished)
@@ -346,6 +384,8 @@ class CloudPane(QWidget):
 
     @Slot(object)
     def vault_result(self, value):
+        if self.vault_provider is not self.selected_provider():
+            return
         operation = self.vault_operation
         if operation == "read" and value:
             self.key.setText(value)
@@ -357,6 +397,7 @@ class CloudPane(QWidget):
         self.credential_worker.deleteLater()
         self.credential_worker = None
         self.vault_operation = ""
+        self.vault_provider = None
         self.controls()
         self.idle.emit()
 

@@ -6,7 +6,7 @@ import pytest
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
-def test_diagnostics_require_consent_before_starting_capture():
+def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PySide6.QtWidgets import QApplication
     from ai_japanese_interview_assistant.__main__ import MainWindow
@@ -32,6 +32,17 @@ def test_diagnostics_require_consent_before_starting_capture():
         from ai_japanese_interview_assistant.cloud_gui import Row
 
         cloud = window.cloud
+        monkeypatch.setenv("OPENAI_API_KEY", "test-openai")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek")
+        cloud.key.setText("temporary-openai")
+        cloud.consent.setChecked(True)
+        cloud.provider.setCurrentIndex(cloud.provider.findData("deepseek"))
+        assert cloud.key.text() == ""
+        assert cloud.api_key() == "test-deepseek"
+        assert not cloud.consent.isChecked()
+        assert "DeepSeek" in cloud.consent.text() and "音频在本机" in cloud.consent.text()
+        assert "本地" in cloud.start.text()
+
         cloud.session_id = 2
         cloud.state = "active"
         cloud.rows[(1, 1, "previous")] = Row(ja="前の質問", finalized=True)
@@ -42,6 +53,58 @@ def test_diagnostics_require_consent_before_starting_capture():
     finally:
         window.close()
         app.processEvents()
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_deepseek_worker_sends_only_local_transcript_to_text_api(monkeypatch):
+    import asyncio
+    import json
+
+    import httpx
+    from ai_japanese_interview_assistant import live
+    from ai_japanese_interview_assistant.config import DEEPSEEK
+
+    async def exercise():
+        finished = asyncio.Event()
+        translations = []
+
+        def handle(request):
+            assert str(request.url) == DEEPSEEK.url
+            assert request.headers["authorization"] == "Bearer test-deepseek"
+            assert json.loads(request.content)["input"] == "こんにちは"
+            return httpx.Response(200, text=(
+                'data: {"type":"response.output_text.delta","delta":"你好"}\n\n'
+                'data: {"type":"response.completed"}\n\n'
+            ))
+
+        def client_for(key, provider):
+            assert provider is DEEPSEEK
+            return httpx.AsyncClient(transport=httpx.MockTransport(handle), headers={"Authorization": f"Bearer {key}"})
+
+        def no_openai(*args, **kwargs):
+            pytest.fail("DeepSeek must not contact OpenAI Realtime")
+
+        async def frames():
+            yield b"fixture-pcm"
+            yield None
+            await finished.wait()
+
+        def on_translation(row_id, text, state):
+            if state == "已翻译":
+                translations.append(text)
+                finished.set()
+
+        monkeypatch.setattr(live, "client_for", client_for)
+        monkeypatch.setattr(live, "load_decoder", lambda: lambda pcm: "こんにちは")
+        monkeypatch.setattr(live, "run_transcription", no_openai)
+        monkeypatch.setattr(live, "record", lambda *args: None)
+        worker = live.LiveWorker(1, None, "test-deepseek", provider=DEEPSEEK)
+        monkeypatch.setattr(worker, "audio_commands", frames)
+        worker.translation.connect(on_translation)
+        await asyncio.wait_for(worker._main(), 3)
+        assert translations == ["你好"]
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")

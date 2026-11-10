@@ -1,0 +1,23 @@
+# Optional dependencies for DeepSeek and Anthropic speech recognition.
+-r requirements.txt
+faster-whisper==1.2.1
+ctranslate2==4.7.1
+# faster-whisper 1.2.1 uses the pre-PyAV 18 audio reader API.
+av==17.1.0
+click==8.5.1
+colorama==0.4.6
+filelock==4.2.10
+flatbuffers==25.12.19
+fsspec==2026.9.0
+hf-xet==1.8.0
+httpcore2==2.16.0
+httpx2==2.16.0
+huggingface-hub==2.4.0
+onnxruntime==1.31.1
+packaging==26.3
+protobuf==7.36.2
+PyYAML==6.0.3
+setuptools==84.2.1
+tokenizers==0.23.3
+tqdm==4.70.1
+truststore==0.10.5

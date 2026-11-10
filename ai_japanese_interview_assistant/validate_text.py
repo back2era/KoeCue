@@ -6,13 +6,14 @@ import os
 from pathlib import Path
 from time import monotonic
 
+from .config import PROVIDERS
 from .interview import InterviewService
 from .services import TextService, client_for, error_message
 
 
-async def validate(args, key):
-    async with client_for(key) as client:
-        text_service = TextService(client)
+async def validate(args, key, provider):
+    async with client_for(key, provider) as client:
+        text_service = TextService(client, provider)
         interview = InterviewService(text_service)
         if args.classification:
             examples = json.loads(Path(args.classification).read_text(encoding="utf-8"))
@@ -46,14 +47,16 @@ def main():
     inputs = parser.add_mutually_exclusive_group(required=True)
     inputs.add_argument("--question")
     inputs.add_argument("--classification", metavar="JSON")
+    parser.add_argument("--provider", choices=PROVIDERS, default="openai")
     parser.add_argument("--send-authorized-text", action="store_true", required=True)
     parser.add_argument("--show-text", action="store_true")
     args = parser.parse_args()
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    provider = PROVIDERS[args.provider]
+    key = os.environ.get(provider.key_env, "").strip()
     if not key:
-        parser.error("Set OPENAI_API_KEY in this process before running the live check.")
+        parser.error(f"Set {provider.key_env} in this process before running the live check.")
     try:
-        return asyncio.run(validate(args, key))
+        return asyncio.run(validate(args, key, provider))
     except Exception as exc:
         parser.exit(1, error_message(exc) + "\n")
 

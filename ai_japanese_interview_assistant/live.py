@@ -1,4 +1,4 @@
-"""Qt worker coordinating live audio, the Realtime socket, and text jobs."""
+"""Qt worker coordinating live audio, speech recognition, and text jobs."""
 import asyncio
 from threading import Event
 from time import monotonic
@@ -6,7 +6,9 @@ from time import monotonic
 from PySide6.QtCore import QThread, Signal
 
 from .audio import AudioBuffer, AudioError, capture, check_topology
+from .config import OPENAI
 from .interview import InterviewService
+from .local_asr import LocalAsrError, load_decoder, run_local_transcription
 from .services import TextService, client_for, error_message
 from .telemetry import Event as LogEvent, record
 from .transcription import AudioProcessor, RealtimeError, TranscriptBook, run_transcription
@@ -19,12 +21,13 @@ class LiveWorker(QThread):
     translation = Signal(object, str, str)
     answer = Signal(object, object, str, bool)
 
-    def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False, facts=()):
+    def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False, facts=(), provider=OPENAI):
         super().__init__(parent)
         self.generation = generation
         self.session_id = session_id
         self.device = device
         self.key = key
+        self.provider = provider
         self.auto_answer = auto_answer
         self.facts = facts
         self.sharing_revoked = Event()
@@ -69,9 +72,11 @@ class LiveWorker(QThread):
         except AudioError as exc:
             record(LogEvent.AUDIO_ERROR)
             self.status.emit("audio", str(exc))
-            self.status.emit("asr", "转写连接已关闭")
+            self.status.emit("asr", "转写连接已关闭" if self.provider is OPENAI else "本地转写已停止")
         except RealtimeError as exc:
             record(LogEvent.API_ERROR)
+            self.status.emit("asr", str(exc))
+        except LocalAsrError as exc:
             self.status.emit("asr", str(exc))
         except Exception as exc:
             record(LogEvent.API_ERROR)
@@ -87,25 +92,36 @@ class LiveWorker(QThread):
         self.runner = asyncio.current_task()
         if self.isInterruptionRequested():
             return
-        async with client_for(self.key) as client:
-            self.service = TextService(client)
+        async with client_for(self.key, self.provider) as client:
+            self.service = TextService(client, self.provider)
             self.interview = InterviewService(self.service)
             started = monotonic()
             try:
-                self.status.emit("asr", "正在连接转写服务…")
+                if self.provider is OPENAI:
+                    self.status.emit("asr", "正在连接转写服务…")
 
-                def connected():
-                    record(LogEvent.REALTIME_READY, monotonic() - started)
-                    self.status.emit("asr", "转写 API 已连接")
+                    def connected():
+                        record(LogEvent.REALTIME_READY, monotonic() - started)
+                        self.status.emit("asr", "转写 API 已连接")
 
-                await run_transcription(
-                    self.key, self.audio_commands(), self.on_event, connected,
-                    on_ending=self.stop_text_and_audio,
-                )
+                    await run_transcription(
+                        self.key, self.audio_commands(), self.on_event, connected,
+                        on_ending=self.stop_text_and_audio,
+                    )
+                else:
+                    self.status.emit("asr", "正在加载本地日语模型…")
+                    decoder = await asyncio.to_thread(load_decoder)
+                    if self.isInterruptionRequested():
+                        return
+                    self.status.emit("asr", "本地转写已就绪，断句后出字幕")
+                    await run_local_transcription(
+                        decoder, self.audio_commands(), self.on_event, on_ending=self.stop_text_and_audio,
+                    )
             finally:
                 self.stop_text_and_audio()
                 await asyncio.gather(*self.jobs.values(), return_exceptions=True)
-                record(LogEvent.REALTIME_END, monotonic() - started)
+                if self.provider is OPENAI:
+                    record(LogEvent.REALTIME_END, monotonic() - started)
 
     def stop_text_and_audio(self):
         self.requestInterruption()
@@ -149,6 +165,8 @@ class LiveWorker(QThread):
                     yield command
 
     def on_event(self, event):
+        if self.isInterruptionRequested():
+            return
         kind = event.get("type", "")
         part = self.book.apply(event)
         if part is None:

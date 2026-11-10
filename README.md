@@ -4,11 +4,11 @@ Windows 11 x64 桌面应用。面向日语模拟面试和已获授权的线上�
 
 | 状态 | 内容 |
 | --- | --- |
-| 已完成 | 首版源码、项目文档、依赖锁定、离线测试及真实 WASAPI 设备枚举 |
-| 进行中 | 实际会议采样、真实 OpenAI API、30 分钟联调和延迟验收 |
+| 已完成 | 首版源码、OpenAI / DeepSeek / Anthropic 选择、本地日语转写、离线测试及真实 WASAPI 设备枚举 |
+| 进行中 | 实际会议采样、服务商真实 API、30 分钟联调和延迟验收 |
 | 未实现 | 按应用独立采集留待后续版本 |
 
-目标运行环境为 Windows 11 x64、Python 3.13 x64 和 PowerShell。本地音频诊断无需 API Key。云端模式需要可访问 OpenAI API 的网络及账户权限。
+目标运行环境为 Windows 11 x64、Python 3.13 x64 和 PowerShell。本地音频诊断无需 API Key。翻译和回答建议需要所选服务商的 Key 与可用网络。
 
 ## 本地运行
 
@@ -19,6 +19,26 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m ai_japanese_interview_assistant
 ```
+
+## 选择服务商
+
+| 服务商 | 日语语音转写 | 中文翻译与回答 |
+| --- | --- | --- |
+| OpenAI | OpenAI Realtime，讲话过程中显示增量 | OpenAI `gpt-6-luna` |
+| DeepSeek | 本机 Whisper，断句后出字幕 | DeepSeek `deepseek-flash` |
+| Anthropic | 本机 Whisper，断句后出字幕 | Claude `claude-haiku-5-5` |
+
+**只有 DeepSeek Key 时**，在项目目录执行一次下列命令。Anthropic 使用相同的本地语音组件。多语言 Whisper base 模型约 148 MB，下载完成后在 CPU 上运行。 [Whisper 模型](https://huggingface.co/Systran/faster-whisper-base/tree/a80717a3a48b1b28aa687bca146cb7301feae1b1)
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-local.txt
+.\.venv\Scripts\python.exe -m ai_japanese_interview_assistant.local_asr --download-model
+.\.venv\Scripts\python.exe -m ai_japanese_interview_assistant
+```
+
+在「实时面试辅助」页选 **DeepSeek**，粘贴自己的 DeepSeek Key，选择音源，确认同意后点击「开始本地转写」。音频留在本机，日语转写和单独授权的相关资料发给所选服务商。本地识别速度取决于电脑性能。 [DeepSeek Responses API](https://api-docs.deepseek.com/guides/responses_api/) · [Claude Messages API](https://platform.claude.com/docs/en/api/messages/create)
+
+## 本地音频诊断
 
 在诊断窗口选择来源，确认采集授权，点击“开始本地诊断”。播放已获授权的声音，观察电平与帧数。按“暂停”确认帧数停止，再“恢复监听”或“停止”。若会议有声音但电平一直为零，先核对会议的输出设备和 Windows 音量混音器。
 
@@ -39,7 +59,7 @@ py -3.13 -m venv .venv
 
 默认仅显示最终段数与首个增量耗时。需要在终端查看日语定稿时加 `--show-text`。默认 pytest 使用协议测试替身和本地分段样本，真实服务需用上面的命令单独验证。
 
-桌面“实时面试辅助”页会同时展示日语增量和逐段中文译文。选择已授权的音频设备、输入会话用 Key 并勾选发送同意后，点击“开始云端监听”。选中历史行可查看完整文本，本次会话的翻译异常可以重试。暂停和停止释放音频并取消请求。暂停后可继续同一次授权会话，停止后历史仍可查看和复制。
+桌面「实时面试辅助」页同时显示日语和逐段中文译文。选中历史行可查看完整文本，本次会话的翻译异常可以重试。暂停和停止释放音频并取消请求。暂停后可继续同一次授权会话，停止后历史仍可查看和复制。上述 WAV 云端转写命令使用 OpenAI Realtime。
 
 ## 无采音验证回答
 
@@ -52,11 +72,13 @@ py -3.13 -m venv .venv
 
 分类样本为 30 条人工标注文本。命令使用真实 API 计算召回和误触发次数。口述时长和 N3–N2 难度需要人工检查。
 
+文本验收可以加 `--provider deepseek` 或 `--provider anthropic`，并设置对应的环境变量。此命令直接接收日语文字，无需安装本地语音模型。
+
 ## 本地资料与凭据
 
 在“编辑资料 / 本次授权”中填写并核对教育、技能、经历、项目或目标岗位的日语和中文事实句。保存后可另外勾选本次允许发送的条目。每次回答只会选择最多两条相关资料。关键词用于匹配日语问题，留空表示可供同类问题选用。可随时撤销分享，停止会话后授权重置。资料文件位于 `%LOCALAPPDATA%\AIJapaneseInterviewAssistant\profile.json`。该文件是当前 Windows 用户目录下的普通 JSON。
 
-API Key 可在密码输入框中仅供本次运行使用，开发时也可用进程环境变量 `OPENAI_API_KEY`。只有明确选择“保存当前 Key”才写入 Windows 凭据管理器。可从同一菜单读取或删除已保存的 Key。
+API Key 可在密码输入框中仅供本次运行使用。开发时按所选服务商使用 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY` 或 `ANTHROPIC_API_KEY`。Windows 凭据管理器按服务商分别保存，原有 OpenAI 凭据可继续读取。切换服务商会清空输入框与本次分享授权。
 
 音频和会话历史在应用中只保留于内存。`%LOCALAPPDATA%\AIJapaneseInterviewAssistant\assistant.log` 滚动保留固定事件名和耗时。OpenAI 文本请求使用 `store=false`，服务端保留规则取决于 API 账户与端点。 [OpenAI 数据控制](https://developers.openai.com/api/docs/guides/your-data)
 
@@ -65,7 +87,8 @@ API Key 可在密码输入框中仅供本次运行使用，开发时也可用进
 | 项目 | 结果 |
 | --- | --- |
 | 干净运行时与锁定依赖 | Windows 11 x64、CPython 3.13.12，`pip check` 通过 |
-| 完整自动化套件 | 30 项通过，包括离屏 Qt、真实设备枚举、模拟 20 次采集生命周期和授权撤销回归 |
+| 完整自动化套件 | 48 项通过，包括离屏 Qt、真实设备枚举、模拟采集生命周期、授权撤销及三家服务商协议替身 |
+| 本地 Whisper | 在 Windows 11 上完成真实模型加载及公开日语音频的离线识别。测试片段由 Spesco 发布，CC BY-SA 4.0。 [Ja-konnichiwa.ogg](https://commons.wikimedia.org/wiki/File:Ja-konnichiwa.ogg) |
 | 实际采集 | 待验证浏览器、Teams、Zoom、麦克风、USB/蓝牙切换及真机生命周期 |
 | 真实 API 与 30 分钟联调 | 待在有可用 Key 和已授权素材的环境验证，包括错误 Key、限流、断网、分类质量和回答时长 |
 | p50/p95 | 待实测，未生成延迟数据 |
