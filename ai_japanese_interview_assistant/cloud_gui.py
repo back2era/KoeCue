@@ -2,15 +2,17 @@
 from dataclasses import dataclass
 import os
 
-from PySide6.QtCore import QTimer, Signal, Qt
+from PySide6.QtCore import QTimer, Signal, Slot, Qt
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QHeaderView, QHBoxLayout, QLabel, QLineEdit, QPushButton, QPlainTextEdit,
+    QApplication, QCheckBox, QComboBox, QHeaderView, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QPlainTextEdit,
     QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .diagnostic import DeviceScan
+from .credentials import credential
 from .interview import Answer
 from .live import LiveWorker
+from .profile_gui import PrivateIO, ProfileDialog
 
 
 @dataclass
@@ -31,6 +33,9 @@ class CloudPane(QWidget):
         super().__init__(parent)
         self.worker = None
         self.scan = None
+        self.credential_worker = None
+        self.vault_operation = ""
+        self.approved_facts = ()
         self.generation = 0
         self.state = "idle"
         self.closing = False
@@ -43,6 +48,14 @@ class CloudPane(QWidget):
         self.key = QLineEdit()
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
         self.key.setPlaceholderText("API Key · 仅在本次运行使用")
+        self.vault_button = QPushButton("Windows 凭据")
+        vault_menu = QMenu(self.vault_button)
+        for action, operation in (("读取已保存的 Key", "read"), ("保存当前 Key", "save"), ("删除已保存的 Key", "delete")):
+            vault_menu.addAction(action, lambda checked=False, op=operation: self.use_vault(op))
+        self.vault_button.setMenu(vault_menu)
+        self.profile = QPushButton("编辑资料 / 本次授权")
+        self.revoke = QPushButton("撤销资料分享")
+        self.profile_status = QLabel("本次未授权资料分享")
         self.consent = QCheckBox("已取得必要同意，允许将所选来源的音频及转写发送至 OpenAI")
         self.auto_answer = QCheckBox("为本次会话自动识别问题并生成回答建议")
         self.start = QPushButton("开始云端监听")
@@ -78,7 +91,15 @@ class CloudPane(QWidget):
         source.addWidget(self.source, 1)
         source.addWidget(self.refresh)
         layout.addLayout(source)
-        layout.addWidget(self.key)
+        key_row = QHBoxLayout()
+        key_row.addWidget(self.key, 1)
+        key_row.addWidget(self.vault_button)
+        layout.addLayout(key_row)
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(self.profile)
+        profile_row.addWidget(self.revoke)
+        profile_row.addWidget(self.profile_status, 1)
+        layout.addLayout(profile_row)
         layout.addWidget(self.consent)
         layout.addWidget(self.auto_answer)
         buttons = QHBoxLayout()
@@ -110,6 +131,8 @@ class CloudPane(QWidget):
         self.retry.clicked.connect(self.retry_translation)
         self.suggest.clicked.connect(self.request_answer)
         self.copy.clicked.connect(self.copy_answer)
+        self.profile.clicked.connect(self.open_profile)
+        self.revoke.clicked.connect(self.revoke_profile)
         self.history.itemSelectionChanged.connect(self.select_row)
         self.refresh_devices()
 
@@ -144,10 +167,12 @@ class CloudPane(QWidget):
         return self.key.text().strip() or os.environ.get("OPENAI_API_KEY", "").strip()
 
     def controls(self):
-        idle = self.worker is None and self.scan is None and not self.closing
+        idle = self.worker is None and self.scan is None and self.credential_worker is None and not self.closing
         configurable = idle and self.state != "paused"
-        for widget in (self.source, self.refresh, self.key, self.consent, self.auto_answer):
+        for widget in (self.source, self.refresh, self.key, self.vault_button, self.consent, self.auto_answer, self.profile):
             widget.setEnabled(configurable)
+        self.revoke.setEnabled(bool(self.approved_facts))
+        self.profile_status.setText(f"本次授权 {len(self.approved_facts)} 条资料" if self.approved_facts else "本次未授权资料分享")
         allowed = bool(self.consent.isChecked() and self.source.currentData() and self.api_key())
         self.start.setEnabled(idle and allowed)
         self.start.setText("恢复云端监听" if self.state == "paused" else "开始云端监听")
@@ -166,7 +191,7 @@ class CloudPane(QWidget):
         self.generation += 1
         self.state = "active"
         self.worker = LiveWorker(self.generation, self.source.currentData(), self.api_key(), self,
-                                 auto_answer=self.auto_answer.isChecked())
+                                 auto_answer=self.auto_answer.isChecked(), facts=self.approved_facts)
         self.worker.status.connect(self.set_status)
         self.worker.transcript.connect(self.add_transcript)
         self.worker.order.connect(self.set_order)
@@ -194,6 +219,7 @@ class CloudPane(QWidget):
             self.worker.stop()
         self.consent.setChecked(False)
         self.auto_answer.setChecked(False)
+        self.approved_facts = ()
         self.asr_status.setText("已停止")
         self.text_status.setText("文本 API 未连接")
         self.controls()
@@ -205,6 +231,7 @@ class CloudPane(QWidget):
             self.state = "idle"
             self.consent.setChecked(False)
             self.auto_answer.setChecked(False)
+            self.approved_facts = ()
         for row in self.rows.values():
             if not row.finalized and row.asr != "转写失败":
                 row.asr = "转写已中断"
@@ -269,6 +296,50 @@ class CloudPane(QWidget):
         if row and row.answer:
             QApplication.clipboard().setText(self.answer_box.toPlainText())
 
+    def open_profile(self):
+        dialog = ProfileDialog(self.approved_facts, self)
+        dialog.authorized.connect(self.set_approved)
+        dialog.changed.connect(lambda facts: self.revoke_profile())
+        dialog.exec()
+        dialog.deleteLater()
+
+    def set_approved(self, facts):
+        self.approved_facts = facts
+        self.controls()
+
+    def revoke_profile(self):
+        self.set_approved(())
+        if self.worker is not None:
+            self.worker.revoke_profile()
+
+    def use_vault(self, operation):
+        if self.credential_worker is not None:
+            return
+        key = self.key.text().strip() if operation == "save" else ""
+        self.vault_operation = operation
+        self.credential_worker = PrivateIO(lambda: credential(operation, key), self)
+        self.credential_worker.result.connect(self.vault_result)
+        self.credential_worker.failed.connect(self.text_status.setText)
+        self.credential_worker.finished.connect(self.vault_finished)
+        self.controls()
+        self.credential_worker.start()
+
+    @Slot(object)
+    def vault_result(self, value):
+        operation = self.vault_operation
+        if operation == "read" and value:
+            self.key.setText(value)
+        self.text_status.setText({"read": "已读取已保存的 Key" if value else "未找到已保存的 Key",
+                                  "save": "Key 已保存到 Windows 凭据管理器",
+                                  "delete": "已清除保存的 Key"}[operation])
+
+    def vault_finished(self):
+        self.credential_worker.deleteLater()
+        self.credential_worker = None
+        self.vault_operation = ""
+        self.controls()
+        self.idle.emit()
+
     def render_history(self):
         if not self.dirty:
             return
@@ -310,4 +381,4 @@ class CloudPane(QWidget):
     def shutdown(self):
         self.closing = True
         self.stop_session()
-        return self.worker is None and self.scan is None
+        return self.worker is None and self.scan is None and self.credential_worker is None

@@ -1,5 +1,6 @@
 """Qt worker coordinating live audio, the Realtime socket, and text jobs."""
 import asyncio
+from threading import Event
 from time import monotonic
 
 from PySide6.QtCore import QThread, Signal
@@ -17,12 +18,14 @@ class LiveWorker(QThread):
     translation = Signal(object, str, str)
     answer = Signal(object, object, str)
 
-    def __init__(self, generation, device, key, parent=None, *, auto_answer=False):
+    def __init__(self, generation, device, key, parent=None, *, auto_answer=False, facts=()):
         super().__init__(parent)
         self.generation = generation
         self.device = device
         self.key = key
         self.auto_answer = auto_answer
+        self.facts = facts
+        self.sharing_revoked = Event()
         self.buffer = AudioBuffer()
         self.book = TranscriptBook()
         self.jobs = {}
@@ -33,6 +36,16 @@ class LiveWorker(QThread):
         self.requestInterruption()
         self.buffer.close()
         self.dispatch(self._cancel)
+
+    def revoke_profile(self):
+        self.sharing_revoked.set()
+        self.dispatch(self._revoke_profile)
+
+    def _revoke_profile(self):
+        self.facts = ()
+        for (kind, _), task in self.jobs.items():
+            if kind == "answer":
+                task.cancel()
 
     def _cancel(self):
         if self.runner is not None:
@@ -58,6 +71,7 @@ class LiveWorker(QThread):
         finally:
             self.buffer.close()
             self.key = ""
+            self.facts = ()
             self.loop = None
 
     async def _main(self):
@@ -160,7 +174,8 @@ class LiveWorker(QThread):
     async def suggest(self, row_id, text, automatic):
         self.answer.emit(row_id, None, "正在检查问题…")
         try:
-            answer = await self.interview.suggest(text, automatic=automatic)
+            facts = () if self.sharing_revoked.is_set() else self.facts
+            answer = await self.interview.suggest(text, automatic=automatic, facts=facts)
         except asyncio.CancelledError:
             self.answer.emit(row_id, None, "回答已取消")
             raise
