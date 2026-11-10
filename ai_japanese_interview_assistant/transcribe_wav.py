@@ -8,18 +8,14 @@ import wave
 from .transcription import AudioProcessor, TranscriptBook, run_transcription
 
 
-async def replay(path, key, show_text):
+async def stream_wav(path, key, on_event, on_start):
     with wave.open(path, "rb") as wav:
         if wav.getsampwidth() != 2 or wav.getcomptype() != "NONE":
             raise ValueError("Expected 16-bit PCM WAV")
         processor = AudioProcessor(wav.getframerate(), wav.getnchannels())
-        book = TranscriptBook()
-        started = 0.0
-        first_delta = None
-
         async def frames():
-            nonlocal started
             started = monotonic()
+            on_start(started)
             elapsed = 0
             while chunk := wav.readframes(round(wav.getframerate() * 0.02)):
                 elapsed += len(chunk) / (2 * wav.getnchannels() * wav.getframerate())
@@ -29,18 +25,30 @@ async def replay(path, key, show_text):
             for command in processor.push(b"", last=True) + processor.finish_turn():
                 yield command
 
-        def on_event(event):
-            nonlocal first_delta
-            part = book.apply(event)
-            if first_delta is None and event.get("type", "").endswith("transcription.delta"):
-                first_delta = monotonic() - started
-            if show_text and part and part.final and event.get("type", "").endswith("transcription.completed"):
-                print(part.text)
-
         await run_transcription(key, frames(), on_event)
-        finals = sum(bool(part.final and part.text) for part in book.parts)
-        print(f"final_segments={finals} first_delta_seconds={first_delta}")
-        return 0 if finals else 1
+
+
+async def replay(path, key, show_text):
+    book = TranscriptBook()
+    started = 0.0
+    first_delta = None
+
+    def on_start(timestamp):
+        nonlocal started
+        started = timestamp
+
+    def on_event(event):
+        nonlocal first_delta
+        part = book.apply(event)
+        if first_delta is None and event.get("type", "").endswith("transcription.delta"):
+            first_delta = monotonic() - started
+        if show_text and part and part.final and event.get("type", "").endswith("transcription.completed"):
+            print(part.text)
+
+    await stream_wav(path, key, on_event, on_start)
+    finals = sum(bool(part.final and part.text) for part in book.parts)
+    print(f"final_segments={finals} first_delta_seconds={first_delta}")
+    return 0 if finals else 1
 
 
 def main():
