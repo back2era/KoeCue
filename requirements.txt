@@ -5,3 +5,10 @@ numpy==2.5.4
 soxr==1.0.0
 webrtcvad-wheels==2.0.14
 websockets==15.0.1
+httpx==0.28.1
+httpcore==1.0.9
+anyio==4.16.0
+certifi==2026.10.23
+h11==0.16.0
+idna==3.20
+typing-extensions==4.16.0

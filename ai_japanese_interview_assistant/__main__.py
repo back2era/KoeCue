@@ -2,8 +2,9 @@
 import sys
 
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import QApplication, QMainWindow, QTabWidget
 
+from .cloud_gui import CloudPane
 from .diagnostic import DiagnosticPane
 
 
@@ -12,10 +13,22 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.closing = False
         self.setWindowTitle("AI Japanese Interview Assistant")
-        self.resize(840, 540)
+        self.resize(980, 720)
+        self.tabs = QTabWidget()
         self.diagnostic = DiagnosticPane(self)
         self.diagnostic.idle.connect(self.retry_close)
-        self.setCentralWidget(self.diagnostic)
+        self.cloud = CloudPane(self)
+        self.cloud.idle.connect(self.retry_close)
+        self.tabs.addTab(self.diagnostic, "本地音频诊断")
+        self.tabs.addTab(self.cloud, "实时面试辅助")
+        self.tabs.currentChanged.connect(self.stop_other_session)
+        self.setCentralWidget(self.tabs)
+
+    def stop_other_session(self, index):
+        if index == 0 and self.cloud.state != "idle":
+            self.cloud.stop_session()
+        elif index == 1 and self.diagnostic.state != "idle":
+            self.diagnostic.stop_capture()
 
     def retry_close(self):
         if self.closing:
@@ -23,7 +36,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.closing = True
-        if self.diagnostic.shutdown():
+        diagnostic_idle = self.diagnostic.shutdown()
+        cloud_idle = self.cloud.shutdown()
+        if diagnostic_idle and cloud_idle:
             event.accept()
         else:
             event.ignore()

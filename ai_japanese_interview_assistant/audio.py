@@ -7,6 +7,10 @@ from math import sqrt
 from threading import Lock
 
 
+# PortAudio initializes and terminates host APIs at process scope.
+_portaudio_lock = Lock()
+
+
 class AudioError(Exception):
     """Safe message about an audio failure."""
 
@@ -73,7 +77,7 @@ def _wasapi_inputs(api, pa):
 def list_devices():
     import pyaudiowpatch as pa
 
-    with pa.PyAudio() as api:
+    with _portaudio_lock, pa.PyAudio() as api:
         return sorted(_wasapi_inputs(api, pa), key=lambda device: (not device.loopback, device.name))
 
 
@@ -85,7 +89,7 @@ def capture(device, buffer):
         active = buffer.push(data, status)
         return (None, pa.paContinue if active else pa.paAbort)
 
-    with pa.PyAudio() as api:
+    with _portaudio_lock, pa.PyAudio() as api:
         if device not in list(_wasapi_inputs(api, pa)):
             raise AudioError("所选设备已变更。请刷新列表并重新选择。")
         stream = api.open(

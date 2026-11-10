@@ -17,10 +17,11 @@ def test_diagnostics_require_consent_before_starting_capture():
     try:
         pane = window.diagnostic
         deadline = monotonic() + 5
-        while pane.scan is not None and monotonic() < deadline:
+        while (pane.scan is not None or window.cloud.scan is not None) and monotonic() < deadline:
             app.processEvents()
             sleep(0.01)
         assert pane.scan is None
+        assert window.cloud.scan is None
         assert pane.device.count() > 1
         pane.device.setCurrentIndex(1)
         assert not pane.start.isEnabled()
