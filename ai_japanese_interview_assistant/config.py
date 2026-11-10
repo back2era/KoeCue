@@ -1,0 +1,5 @@
+"""Provider defaults shared by desktop and validation entry points."""
+REALTIME_MODEL = "gpt-live-transcribe"
+TEXT_MODEL = "gpt-6-luna"
+REALTIME_URL = "wss://api.openai.com/v1/realtime?intent=transcription"
+RESPONSES_URL = "https://api.openai.com/v1/responses"

@@ -1,3 +1,7 @@
 PySide6-Essentials==6.10.1
 shiboken6==6.10.1
 PyAudioWPatch==0.2.12.8
+numpy==2.5.4
+soxr==1.0.0
+webrtcvad-wheels==2.0.14
+websockets==15.0.1
