@@ -5,6 +5,7 @@ from time import monotonic
 from PySide6.QtCore import QThread, Signal
 
 from .audio import AudioBuffer, AudioError, capture
+from .interview import InterviewService
 from .services import TextService, client_for, error_message
 from .transcription import AudioProcessor, RealtimeError, TranscriptBook, run_transcription
 
@@ -14,12 +15,14 @@ class LiveWorker(QThread):
     transcript = Signal(object)
     order = Signal(object)
     translation = Signal(object, str, str)
+    answer = Signal(object, object, str)
 
-    def __init__(self, generation, device, key, parent=None):
+    def __init__(self, generation, device, key, parent=None, *, auto_answer=False):
         super().__init__(parent)
         self.generation = generation
         self.device = device
         self.key = key
+        self.auto_answer = auto_answer
         self.buffer = AudioBuffer()
         self.book = TranscriptBook()
         self.jobs = {}
@@ -64,6 +67,7 @@ class LiveWorker(QThread):
             return
         async with client_for(self.key) as client:
             self.service = TextService(client)
+            self.interview = InterviewService(self.service)
             try:
                 self.status.emit("asr", "正在连接转写服务…")
                 await run_transcription(
@@ -112,15 +116,20 @@ class LiveWorker(QThread):
             self.order.emit(tuple((self.generation, part.item_id) for part in self.book.parts))
         elif kind.endswith("transcription.completed") and part.text:
             self.start_translation(row_id, part.text)
+            if self.auto_answer:
+                self.start_answer(row_id, part.text, True)
 
     def start_translation(self, row_id, text):
         job_id = ("translation", row_id)
-        if self.isInterruptionRequested() or job_id in self.jobs:
-            return
         if len(self.jobs) >= 8:
             self.translation.emit(row_id, "", "队列繁忙，可以重试")
             return
-        task = asyncio.create_task(self.translate(row_id, text))
+        self.start_job(job_id, self.translate, row_id, text)
+
+    def start_job(self, job_id, handler, *args):
+        if self.isInterruptionRequested() or job_id in self.jobs:
+            return
+        task = asyncio.create_task(handler(*args))
         self.jobs[job_id] = task
         task.add_done_callback(lambda task: self.jobs.pop(job_id, None))
 
@@ -141,3 +150,21 @@ class LiveWorker(QThread):
         else:
             self.translation.emit(row_id, result, "已翻译")
             self.status.emit("text", "文本 API 已连接")
+
+    def start_answer(self, row_id, text, automatic=False):
+        if len(self.jobs) >= 8:
+            self.answer.emit(row_id, None, "回答队列繁忙，可以重试")
+            return
+        self.start_job(("answer", row_id), self.suggest, row_id, text, automatic)
+
+    async def suggest(self, row_id, text, automatic):
+        self.answer.emit(row_id, None, "正在检查问题…")
+        try:
+            answer = await self.interview.suggest(text, automatic=automatic)
+        except asyncio.CancelledError:
+            self.answer.emit(row_id, None, "回答已取消")
+            raise
+        except Exception as exc:
+            self.answer.emit(row_id, None, error_message(exc))
+        else:
+            self.answer.emit(row_id, answer, "回答已生成" if answer else "无需自动回答")

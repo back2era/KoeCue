@@ -75,3 +75,25 @@ class TextService:
                         case "error" | "response.failed" | "response.incomplete":
                             break
         raise ServiceError("未收到完整译文。可以重试该段。")
+
+    async def structured(self, name, instructions, value, properties, max_tokens):
+        payload = self.payload(instructions, value, max_tokens)
+        payload["text"] = {"format": {
+            "type": "json_schema", "name": name, "strict": True,
+            "schema": {"type": "object", "properties": properties,
+                       "required": list(properties), "additionalProperties": False},
+        }}
+        async with asyncio.timeout(18):
+            response = await self.client.post(RESPONSES_URL, json=payload)
+            response.raise_for_status()
+            result = response.json()
+        if result.get("status") == "completed":
+            for output in result.get("output", []):
+                if output.get("type") != "message":
+                    continue
+                for content in output.get("content", []):
+                    if content.get("type") == "output_text":
+                        value = json.loads(content["text"])
+                        if isinstance(value, dict) and set(value) == set(properties):
+                            return value
+        raise ServiceError("未收到完整的结构化结果。")
