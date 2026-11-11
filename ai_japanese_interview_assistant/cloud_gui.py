@@ -145,6 +145,7 @@ class CloudPane(QWidget):
         self.profile_status = QLabel("本次未授权资料分享")
         self.consent = QCheckBox()
         self.auto_answer = QCheckBox("自动识别问题并生成回答")
+        self.auto_answer.setChecked(True)
         self.start = QPushButton("开始云端监听")
         self.pause = QPushButton("暂停")
         self.stop = QPushButton("停止")
@@ -170,7 +171,7 @@ class CloudPane(QWidget):
         self.translated = CaptionLabel("等待中文译文…")
         self.original_state = plain_label("", "captionState")
         self.translation_state = plain_label("", "captionState")
-        self.answer_ja = plain_label("识别到面试问题后，可生成日语参考回答。", "answerText")
+        self.answer_ja = plain_label("", "answerText")
         self.answer_zh = plain_label("", "answerTranslation")
         for label in (self.answer_ja, self.answer_zh):
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -194,6 +195,7 @@ class CloudPane(QWidget):
         self.source.currentIndexChanged.connect(self.source_changed)
         self.provider.currentIndexChanged.connect(self.provider_changed)
         self.consent.toggled.connect(self.controls)
+        self.auto_answer.toggled.connect(self.select_row)
         self.key.textChanged.connect(self.controls)
         self.start.clicked.connect(self.start_session)
         self.pause.clicked.connect(self.pause_session)
@@ -209,6 +211,7 @@ class CloudPane(QWidget):
         self.latest.clicked.connect(self.select_latest)
         self.provider_changed()
         self.refresh_devices()
+        self.select_row()
 
     def build_layout(self):
         self.setObjectName("captionPage")
@@ -377,7 +380,6 @@ class CloudPane(QWidget):
         provider = self.selected_provider()
         self.key.clear()
         self.consent.setChecked(False)
-        self.auto_answer.setChecked(False)
         self.approved_facts = ()
         self.key.setPlaceholderText(f"{provider.label} API Key · 仅在本次运行使用")
         self.consent.setText(
@@ -481,7 +483,6 @@ class CloudPane(QWidget):
         if self.worker is not None:
             self.worker.stop()
         self.consent.setChecked(False)
-        self.auto_answer.setChecked(False)
         self.approved_facts = ()
         self.asr_status.setText("已停止")
         self.text_status.setText("文本 API 未连接")
@@ -494,7 +495,6 @@ class CloudPane(QWidget):
         if self.state == "active":
             self.state = "idle"
             self.consent.setChecked(False)
-            self.auto_answer.setChecked(False)
             self.approved_facts = ()
             if self.audio_status.text().startswith(("正在", "音频 ·")):
                 self.audio_status.setText("音频已停止")
@@ -680,7 +680,9 @@ class CloudPane(QWidget):
         translation = row.translation if row else ""
         self.translation_state.setText(translation)
         answer = row.answer if row else None
-        self.answer_ja.setText(answer.ja if answer else "识别到面试问题后，可生成日语参考回答。")
+        placeholder = ("识别到面试问题后会自动生成日语参考回答。" if self.auto_answer.isChecked()
+                       else "选中字幕后可生成日语参考回答。")
+        self.answer_ja.setText(answer.ja if answer else placeholder)
         self.answer_zh.setText(answer.zh if answer else "")
         self.answer_zh.setVisible(bool(answer and answer.zh))
         answer_status = row.answer_status if row else ""

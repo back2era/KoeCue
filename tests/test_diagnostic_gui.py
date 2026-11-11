@@ -16,6 +16,7 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
     window.show()
     try:
         assert window.tabs.currentWidget() is window.cloud
+        assert window.cloud.auto_answer.isChecked()
         assert window.cloud.settings.isHidden()
         assert window.cloud.history.isVisible()
         assert not window.cloud.scroll.isAncestorOf(window.cloud.history)
@@ -45,6 +46,7 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
         assert cloud.key.text() == ""
         assert cloud.api_key() == "test-deepseek"
         assert not cloud.consent.isChecked()
+        assert cloud.auto_answer.isChecked()
         assert "DeepSeek" in cloud.consent.text() and "音频在本机" in cloud.consent.text()
         assert "本地" in cloud.start.text()
 
@@ -55,13 +57,18 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
         cloud.render_history()
         assert not cloud.retry.isEnabled()
         assert not cloud.suggest.isEnabled()
+        cloud.stop_session()
+        assert cloud.auto_answer.isChecked()
+        cloud.auto_answer.setChecked(False)
+        cloud.provider.setCurrentIndex(cloud.provider.findData("openai"))
+        assert not cloud.auto_answer.isChecked()
     finally:
         window.close()
         app.processEvents()
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
-def test_deepseek_worker_sends_only_local_transcript_to_text_api(monkeypatch):
+def test_deepseek_worker_translates_and_automatically_answers_a_local_question(monkeypatch):
     import asyncio
     import json
 
@@ -72,15 +79,32 @@ def test_deepseek_worker_sends_only_local_transcript_to_text_api(monkeypatch):
     async def exercise():
         finished = asyncio.Event()
         translations = []
+        answers = []
+        question = "要件が変わったらどうしますか。"
 
         def handle(request):
             assert str(request.url) == DEEPSEEK.url
             assert request.headers["authorization"] == "Bearer test-deepseek"
-            assert json.loads(request.content)["input"] == "こんにちは"
-            return httpx.Response(200, text=(
-                'data: {"type":"response.output_text.delta","delta":"你好"}\n\n'
-                'data: {"type":"response.completed"}\n\n'
-            ))
+            payload = json.loads(request.content)
+            if payload.get("stream"):
+                assert payload["input"] == question
+                return httpx.Response(200, text=(
+                    'data: {"type":"response.output_text.delta","delta":"需求变更时你会怎么办？"}\n\n'
+                    'data: {"type":"response.completed"}\n\n'
+                ))
+            name = payload["text"]["format"]["name"]
+            if name == "question":
+                assert payload["input"] == question
+            structured = {
+                "question": {"question": True, "personal": False, "categories": []},
+                "draft": {"before_ja": "影響範囲を確認します。", "before_zh": "我会确认影响范围。",
+                          "after_ja": "", "after_zh": "", "fact_ids": []},
+                "verify_answer": {"safe": True},
+            }[name]
+            return httpx.Response(200, json={"status": "completed", "output": [{
+                "type": "message",
+                "content": [{"type": "output_text", "text": json.dumps(structured)}],
+            }]})
 
         def client_for(key, provider):
             assert provider is DEEPSEEK
@@ -97,17 +121,26 @@ def test_deepseek_worker_sends_only_local_transcript_to_text_api(monkeypatch):
         def on_translation(row_id, text, state):
             if state == "已翻译":
                 translations.append(text)
-                finished.set()
+                if answers:
+                    finished.set()
+
+        def on_answer(row_id, answer, state, scoped):
+            if answer is not None:
+                answers.append((row_id, answer.ja, answer.zh))
+                if translations:
+                    finished.set()
 
         monkeypatch.setattr(live, "client_for", client_for)
-        monkeypatch.setattr(live, "load_decoder", lambda: lambda pcm: "こんにちは")
+        monkeypatch.setattr(live, "load_decoder", lambda: lambda pcm: question)
         monkeypatch.setattr(live, "run_transcription", no_openai)
         monkeypatch.setattr(live, "record", lambda *args: None)
-        worker = live.LiveWorker(1, None, "test-deepseek", provider=DEEPSEEK)
+        worker = live.LiveWorker(1, None, "test-deepseek", provider=DEEPSEEK, auto_answer=True)
         monkeypatch.setattr(worker, "audio_commands", frames)
         worker.translation.connect(on_translation)
+        worker.answer.connect(on_answer)
         await asyncio.wait_for(worker._main(), 3)
-        assert translations == ["你好"]
+        assert translations == ["需求变更时你会怎么办？"]
+        assert answers == [((0, 1, "local-1"), "影響範囲を確認します。", "我会确认影响范围。")]
 
     asyncio.run(exercise())
 

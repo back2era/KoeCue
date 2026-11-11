@@ -63,7 +63,7 @@ py -3.13 -m venv .venv
 
 ## 无采音验证回答
 
-自动建议默认关闭。实时会话中可以对选中的日语定稿手动生成建议，或在开始前为本次会话开启自动分类。生成后可复制日语参考答案和简体中文。
+自动建议默认开启。开始监听后，识别到面试问题就会为对应的字幕生成日语参考答案和简体中文，可在历史对话里选中该行查看和复制。可在设置中关闭自动回答，也可对选中的日语定稿手动生成建议。
 
 ```powershell
 .\.venv\Scripts\python.exe -m ai_japanese_interview_assistant.validate_text --classification tests/fixtures/questions.json --send-authorized-text
