@@ -3,10 +3,11 @@ from uuid import uuid4
 
 from PySide6.QtCore import QThread, Signal, Slot, Qt
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QHeaderView, QHBoxLayout, QLabel, QPushButton, QTableWidget,
+    QHeaderView, QHBoxLayout, QPushButton, QTableWidget,
     QTableWidgetItem, QVBoxLayout,
 )
 
+from .glass import GlassComboBox, GlassDialog, glass_panel, plain_label
 from .profiles import CATEGORIES, Fact, ProfileError, ProfileStore, validate_facts
 
 
@@ -32,19 +33,23 @@ class PrivateIO(QThread):
             self.operation = None
 
 
-class ProfileDialog(QDialog):
+class ProfileDialog(GlassDialog):
     authorized = Signal(object)
     changed = Signal(object)
 
     def __init__(self, approved, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("本地资料与会话授权")
-        self.resize(900, 430)
+        super().__init__("本地资料与会话授权", parent)
+        self.resize(920, 475)
         self.approved = {fact.id: fact for fact in approved}
         self.worker = None
         self.loaded = False
         self.saved = ()
         self.table = QTableWidget(0, 5)
+        self.table.setAccessibleName("个人资料条目")
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.verticalHeader().hide()
+        self.table.verticalHeader().setDefaultSectionSize(43)
         self.table.setHorizontalHeaderLabels(["本次分享", "类别", "日语事实句", "中文事实句", "关键词"])
         header = self.table.horizontalHeader()
         for index in (2, 3, 4):
@@ -53,19 +58,24 @@ class ProfileDialog(QDialog):
         self.remove = QPushButton("删除所选")
         self.save = QPushButton("保存到本地")
         self.share = QPushButton("授权勾选条目")
+        self.share.setObjectName("primaryAction")
         self.close_button = QPushButton("关闭")
-        self.status = QLabel()
-        self.status.setWordWrap(True)
-        layout = QVBoxLayout(self)
-        note = QLabel("请填写你核对过的日语和中文事实句。保存留在本机。授权后，生成答案时才会按问题选用。")
-        note.setWordWrap(True)
-        layout.addWidget(note)
+        self.status = plain_label("", "muted")
+        self.body.addWidget(plain_label("资料保存在本机。授权后，生成回答时才会按问题选用勾选条目。", "muted"))
+        card = glass_panel()
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(11)
         layout.addWidget(self.table, 1)
         layout.addWidget(self.status)
         actions = QHBoxLayout()
         for button in (self.add, self.remove, self.save, self.share, self.close_button):
+            button.setAutoDefault(False)
+            if button is self.save:
+                actions.addStretch(1)
             actions.addWidget(button)
         layout.addLayout(actions)
+        self.body.addWidget(card, 1)
         self.add.clicked.connect(self.add_blank)
         self.remove.clicked.connect(self.remove_selected)
         self.save.clicked.connect(self.save_profile)
@@ -116,7 +126,7 @@ class ProfileDialog(QDialog):
         check.setCheckState(Qt.CheckState.Checked if self.approved.get(fact.id) == fact else Qt.CheckState.Unchecked)
         check.setData(Qt.ItemDataRole.UserRole, fact.id)
         self.table.setItem(row, 0, check)
-        category = QComboBox()
+        category = GlassComboBox()
         for code, label in zip(CATEGORIES, LABELS):
             category.addItem(label, code)
         category.setCurrentIndex(category.findData(fact.category))

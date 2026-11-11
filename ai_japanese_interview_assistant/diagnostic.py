@@ -3,11 +3,11 @@ from time import monotonic
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QGroupBox, QHBoxLayout, QLabel, QProgressBar, QPushButton,
-    QVBoxLayout, QWidget,
+    QCheckBox, QHBoxLayout, QProgressBar, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from .audio import AudioBuffer, AudioError, capture, check_topology, list_devices, pcm_level
+from .glass import GlassComboBox, glass_panel, plain_label
 from .telemetry import Event, record
 
 
@@ -89,34 +89,54 @@ class DiagnosticPane(QWidget):
         self.state = "idle"
         self.closing = False
         self.capture_available = True
-        self.device = QComboBox()
+        self.device = GlassComboBox()
+        self.device.setAccessibleName("音频来源")
+        self.device.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.refresh = QPushButton("刷新设备")
         self.start = QPushButton("开始本地诊断")
+        self.start.setObjectName("primaryAction")
         self.pause = QPushButton("暂停")
         self.stop = QPushButton("停止")
         self.consent = QCheckBox("我已确认有权采集这个来源的声音")
-        self.status = QLabel("尚未开始")
-        self.count = QLabel("已接收 0 帧")
+        self.status = plain_label("尚未开始", "muted")
+        self.count = plain_label("已接收 0 帧", "muted")
         self.meter = QProgressBar()
+        self.meter.setAccessibleName("输入电平")
+        self.meter.setTextVisible(False)
         self.meter.setRange(0, 100)
+        self.meter.setValue(0)
 
         layout = QVBoxLayout(self)
-        info = QLabel("回环会读取所选播放设备上的混音。此页面仅显示本地电平与帧数。")
-        info.setWordWrap(True)
-        layout.addWidget(info)
-        source = QGroupBox("音频来源")
-        row = QHBoxLayout(source)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        source = glass_panel()
+        source_layout = QVBoxLayout(source)
+        source_layout.setContentsMargins(20, 17, 20, 17)
+        source_layout.setSpacing(11)
+        source_layout.addWidget(plain_label("音频来源", "sectionTitle"))
+        source_layout.addWidget(plain_label("回环会读取所选播放设备上的混音。此页面仅显示本地电平与帧数。", "muted"))
+        row = QHBoxLayout()
         row.addWidget(self.device, 1)
         row.addWidget(self.refresh)
+        source_layout.addLayout(row)
+        source_layout.addWidget(self.consent)
         layout.addWidget(source)
-        layout.addWidget(self.consent)
+
+        signal_card = glass_panel()
+        signal_layout = QVBoxLayout(signal_card)
+        signal_layout.setContentsMargins(20, 17, 20, 17)
+        signal_layout.setSpacing(13)
+        meter_header = QHBoxLayout()
+        meter_header.addWidget(plain_label("输入电平", "sectionTitle"), 1)
+        meter_header.addWidget(self.count)
+        signal_layout.addLayout(meter_header)
+        signal_layout.addWidget(self.meter)
         controls = QHBoxLayout()
-        for button in (self.start, self.pause, self.stop):
+        controls.addWidget(self.status, 1)
+        for button in (self.pause, self.stop, self.start):
             controls.addWidget(button)
-        layout.addLayout(controls)
-        layout.addWidget(self.status)
-        layout.addWidget(self.meter)
-        layout.addWidget(self.count)
+        signal_layout.addLayout(controls)
+        layout.addWidget(signal_card)
         layout.addStretch()
 
         self.refresh.clicked.connect(self.refresh_devices)

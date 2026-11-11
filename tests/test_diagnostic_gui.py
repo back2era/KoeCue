@@ -1,4 +1,4 @@
-"""Offscreen smoke test with real device enumeration and no capture."""
+"""Offscreen desktop tests with no live network requests."""
 import os
 from time import monotonic, sleep
 
@@ -88,6 +88,58 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
         cloud.auto_answer.setChecked(False)
         cloud.provider.setCurrentIndex(cloud.provider.findData("openai"))
         assert not cloud.auto_answer.isChecked()
+    finally:
+        window.close()
+        wait_until(app, lambda: not window.isVisible())
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_glass_layout_keeps_history_visible_and_settings_in_sync():
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant.__main__ import MainWindow, configure_application
+    from ai_japanese_interview_assistant.cloud_gui import Row
+
+    app = QApplication.instance() or QApplication([])
+    configure_application(app)
+    window = MainWindow()
+    window.resize(1160, 770)
+    window.show()
+    cloud = window.cloud
+    try:
+        wait_until(app, lambda: cloud.provider.isEnabled() and window.diagnostic.scan is None)
+        assert cloud.splitter.orientation() == Qt.Orientation.Horizontal
+        cloud.settings_toggle.click()
+        assert cloud.settings.isVisible()
+        assert cloud.history.isVisible() and cloud.stop.isVisible()
+        assert not cloud.settings.grab().isNull()
+        cloud.settings.reject()
+        assert not cloud.settings_toggle.isChecked()
+        assert not cloud.settings.isVisible()
+        for index in range(8):
+            key = (0, index, str(index))
+            cloud.rows[key] = Row(ja=f"質問 {index}", finalized=True)
+            cloud.mark_changed(key)
+        cloud.render_history()
+        window.resize(790, 730)
+        app.processEvents()
+        assert cloud.splitter.orientation() == Qt.Orientation.Vertical
+        assert cloud.history.isVisible() and cloud.stop.isVisible()
+        scroll = cloud.history.verticalScrollBar()
+        assert scroll.maximum() > 0 and scroll.value() == scroll.maximum()
+        window.resize(790, 550)
+        app.processEvents()
+        assert cloud.splitter.orientation() == Qt.Orientation.Horizontal
+        cloud.settings_toggle.click()
+        window.tabs.setCurrentWidget(window.diagnostic)
+        assert not cloud.settings.isVisible()
+        assert window.diagnostic.isVisible()
+        window.activateWindow()
+        app.processEvents()
+        QTest.keyClick(window, Qt.Key.Key_Tab, Qt.KeyboardModifier.ControlModifier)
+        assert window.tabs.currentWidget() is cloud
     finally:
         window.close()
         wait_until(app, lambda: not window.isVisible())

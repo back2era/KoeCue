@@ -4,7 +4,7 @@ Windows 11 x64 桌面应用。面向日语模拟面试和已获授权的线上�
 
 | 状态 | 内容 |
 | --- | --- |
-| 已完成 | 逐字显示的日中字幕、常驻对话历史、OpenAI / DeepSeek / Anthropic 选择、本地日语转写、离线测试及真实 WASAPI 设备枚举 |
+| 已完成 | 统一的深色玻璃界面、逐字显示的日中字幕、常驻对话历史、OpenAI / DeepSeek / Anthropic 选择、本地日语转写、离线测试及真实 WASAPI 设备枚举 |
 | 进行中 | 实际会议采样、服务商真实 API、30 分钟联调和延迟验收 |
 | 未实现 | 按应用独立采集留待后续版本 |
 
@@ -36,7 +36,7 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m ai_japanese_interview_assistant
 ```
 
-在「实时面试辅助」页点「设置」，选 **DeepSeek**，输入或读取自己的 DeepSeek Key，选择音源，确认同意后点击「开始本地转写」。音频留在本机，日语转写和单独授权的相关资料发给所选服务商。本地识别速度取决于电脑性能。 [DeepSeek Responses API](https://api-docs.deepseek.com/guides/responses_api/) · [Claude Messages API](https://platform.claude.com/docs/en/api/messages/create)
+在「实时面试」页点「设置」，选 **DeepSeek**，输入或读取自己的 DeepSeek Key，选择音源，确认同意后点击「开始本地转写」。音频留在本机，日语转写和单独授权的相关资料发给所选服务商。本地识别速度取决于电脑性能。 [DeepSeek Responses API](https://api-docs.deepseek.com/guides/responses_api/) · [Claude Messages API](https://platform.claude.com/docs/en/api/messages/create)
 
 ## 本地音频诊断
 
@@ -65,6 +65,8 @@ py -3.13 -m venv .venv
 
 自动建议默认开启。开始监听后，识别到面试问题就会为对应的字幕生成日语参考答案和简体中文，可在历史对话里选中该行查看和复制。可在设置中关闭自动回答，也可对选中的日语定稿手动生成建议。
 
+宽窗口并排显示实时字幕和历史对话，窄窗口会改为上下排列。可拖动分隔线调整空间。「设置」在独立窗口打开，主界面上的历史和监听控制仍可使用。玻璃卡片透出应用内部的模糊背景。
+
 ```powershell
 .\.venv\Scripts\python.exe -m ai_japanese_interview_assistant.validate_text --classification tests/fixtures/questions.json --send-authorized-text
 .\.venv\Scripts\python.exe -m ai_japanese_interview_assistant.validate_text --question 'チームで意見が分かれた場合、どうしますか。' --send-authorized-text --show-text
@@ -87,7 +89,7 @@ py -3.13 -m venv .venv
 | 项目 | 结果 |
 | --- | --- |
 | 干净运行时与锁定依赖 | Windows 11 x64、CPython 3.13.12，`pip check` 通过 |
-| 完整自动化套件 | 52 项通过，包括离屏 Qt、真实设备枚举、设置恢复、字幕逐字追加、历史保留和阅读位置、模拟采集生命周期及三家服务商协议替身 |
+| 完整自动化套件 | 53 项通过，包括离屏 Qt 布局切换、设置窗口、真实设备枚举、设置恢复、字幕逐字追加、历史保留和阅读位置、模拟采集生命周期及三家服务商协议替身 |
 | 本地 Whisper | 在 Windows 11 上用真实模型离线识别公开日语发音片段。测试片段由 Spesco 发布，CC BY-SA 4.0。 [Ja-konnichiwa.ogg](https://commons.wikimedia.org/wiki/File:Ja-konnichiwa.ogg) |
 | 实际采集 | 待验证浏览器、Teams、Zoom、麦克风、USB/蓝牙切换及真机生命周期 |
 | 真实 API 与 30 分钟联调 | 待在有可用 Key 和已授权素材的环境验证，包括错误 Key、限流、断网、分类质量和回答时长 |
