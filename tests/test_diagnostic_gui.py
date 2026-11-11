@@ -182,6 +182,36 @@ def test_selected_theme_is_restored_after_restart():
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_answer_level_is_restored_after_restart():
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant.__main__ import MainWindow, configure_application
+
+    app = QApplication.instance() or QApplication([])
+    configure_application(app)
+    window = MainWindow()
+    window.show()
+    try:
+        wait_until(app, lambda: window.cloud.provider.isEnabled())
+        level = window.cloud.answer_level
+        assert level.currentData() == "N2"
+        assert {level.itemData(i) for i in range(level.count())} == {"N1", "N2", "N3", "N4", "N5"}
+        level.setCurrentIndex(level.findData("N1"))
+    finally:
+        window.close()
+        wait_until(app, lambda: not window.isVisible())
+
+    reopened = MainWindow()
+    reopened.show()
+    try:
+        wait_until(app, lambda: reopened.cloud.provider.isEnabled())
+        assert reopened.cloud.answer_level.currentData() == "N1"
+    finally:
+        reopened.close()
+        wait_until(app, lambda: not reopened.isVisible())
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
 def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_statement(monkeypatch):
     import asyncio
     import json

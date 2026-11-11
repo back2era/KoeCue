@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from .answer_format import ANSWER_LEVELS, DEFAULT_ANSWER_LEVEL
 from .diagnostic import DeviceScan
 from .config import OPENAI, PROVIDERS
 from .credentials import credential
@@ -113,6 +114,11 @@ class CloudPane(QWidget):
         for theme_id, theme in THEMES.items():
             self.theme.addItem(theme.label, theme_id)
         self.theme.setCurrentIndex(self.theme.findData(DEFAULT_THEME))
+        self.answer_level = GlassComboBox()
+        self.answer_level.setAccessibleName("AI 回答难度")
+        for level in ANSWER_LEVELS:
+            self.answer_level.addItem(level, level)
+        self.answer_level.setCurrentIndex(self.answer_level.findData(DEFAULT_ANSWER_LEVEL))
         self.provider = GlassComboBox()
         self.provider.setAccessibleName("API 服务商")
         for code, provider in PROVIDERS.items():
@@ -188,6 +194,7 @@ class CloudPane(QWidget):
         self.refresh.clicked.connect(self.refresh_devices)
         self.source.currentIndexChanged.connect(self.source_changed)
         self.theme.currentIndexChanged.connect(lambda: self.theme_changed.emit(self.theme.currentData()))
+        self.answer_level.currentIndexChanged.connect(self.update_answer_level)
         self.provider.currentIndexChanged.connect(self.provider_changed)
         self.consent.toggled.connect(self.controls)
         self.auto_answer.toggled.connect(self.select_row)
@@ -305,13 +312,16 @@ class CloudPane(QWidget):
 
     def build_settings(self):
         self.settings = GlassDialog("设置", self)
-        self.settings.resize(640, 412)
-        appearance = glass_panel()
-        appearance_row = QHBoxLayout(appearance)
-        appearance_row.setContentsMargins(16, 12, 16, 12)
-        appearance_row.addWidget(plain_label("界面主题", "sectionTitle"), 1)
-        appearance_row.addWidget(self.theme)
-        self.settings.body.addWidget(appearance)
+        self.settings.resize(640, 458)
+        options = glass_panel()
+        option_layout = QVBoxLayout(options)
+        option_layout.setContentsMargins(16, 12, 16, 12)
+        for title, selector in (("界面主题", self.theme), ("AI 回答难度", self.answer_level)):
+            row = QHBoxLayout()
+            row.addWidget(plain_label(title, "sectionTitle"), 1)
+            row.addWidget(selector)
+            option_layout.addLayout(row)
+        self.settings.body.addWidget(options)
         card = glass_panel()
         settings = QVBoxLayout(card)
         settings.setContentsMargins(16, 14, 16, 14)
@@ -461,6 +471,7 @@ class CloudPane(QWidget):
                 and self.settings_worker is None and not self.closing)
         configurable = idle and self.state != "paused"
         self.theme.setEnabled(self.preferences_ready and not self.closing)
+        self.answer_level.setEnabled(self.preferences_ready and not self.closing)
         for widget in (self.source, self.refresh, self.provider, self.key, self.vault_button, self.consent, self.auto_answer):
             widget.setEnabled(configurable)
         profile_state = (
@@ -525,7 +536,7 @@ class CloudPane(QWidget):
         self.worker = LiveWorker(self.generation, self.source.currentData(), self.api_key(), self,
                                  session_id=self.session_id, auto_answer=self.auto_answer.isChecked(),
                                  facts=self.approved_facts, personal_info=self.approved_personal,
-                                 provider=self.selected_provider())
+                                 provider=self.selected_provider(), answer_level=self.answer_level.currentData())
         self.worker.status.connect(self.set_status)
         self.worker.partial_transcript.connect(self.add_partial_transcript)
         self.worker.transcript.connect(self.add_transcript)
@@ -535,6 +546,10 @@ class CloudPane(QWidget):
         self.worker.finished.connect(self.worker_finished)
         self.controls()
         self.worker.start()
+
+    def update_answer_level(self):
+        if self.worker is not None:
+            self.worker.answer_level = self.answer_level.currentData()
 
     def set_status(self, service, value):
         if self.state == "active":
@@ -748,11 +763,13 @@ class CloudPane(QWidget):
             self.provider.setCurrentIndex(self.provider.findData(preferences.provider))
         self.auto_answer.setChecked(preferences.auto_answer)
         self.theme.setCurrentIndex(self.theme.findData(preferences.theme))
+        self.answer_level.setCurrentIndex(self.answer_level.findData(preferences.answer_level))
         self.restore_audio_source()
 
     def persist_preferences(self):
         preferences = Preferences(
             self.provider.currentData(), *self.audio_selection, self.auto_answer.isChecked(), self.theme.currentData(),
+            self.answer_level.currentData(),
         )
         changed = preferences != self.preferences
         key = self.key.text().strip() if self.key.isModified() else ""

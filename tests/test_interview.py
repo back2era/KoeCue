@@ -13,10 +13,12 @@ class ScriptedText:
     def __init__(self, responses):
         self.responses = iter(responses)
         self.calls = []
+        self.prompts = {}
         self.schemas = {}
 
     async def structured(self, purpose, prompt, value, schema, max_tokens):
         self.calls.append((purpose, value))
+        self.prompts[purpose] = prompt
         self.schemas[purpose] = schema
         return next(self.responses)
 
@@ -199,3 +201,96 @@ def test_revocation_stops_further_excerpt_requests(stage, expected):
             EXCERPT_QUESTION, automatic=True, personal_info=excerpt_info(), allowed=lambda: authorized,
         ))
     assert [purpose for purpose, _ in text.calls] == expected
+
+
+@pytest.mark.parametrize("options,level,guidance", [
+    ({}, "N2", "常见商务用语"),
+    ({"level": "N1"}, "N1", "细致的语气"),
+])
+def test_answer_draft_uses_requested_japanese_level(options, level, guidance):
+    text = ScriptedText([
+        {"before_ja": "要件を確認します。", "before_zh": "我会确认需求。",
+         "after_ja": "", "after_zh": "", "fact_ids": []},
+        {"safe": True},
+    ])
+
+    asyncio.run(InterviewService(text).suggest("まず何をしますか。", automatic=True, **options))
+
+    assert level in text.prompts["draft"]
+    assert guidance in text.prompts["draft"]
+
+
+def test_invalid_japanese_level_stops_before_a_provider_request():
+    text = ScriptedText([])
+
+    with pytest.raises(ValueError, match="N7"):
+        asyncio.run(InterviewService(text).suggest("まず何をしますか。", automatic=True, level="N7"))
+
+    assert text.calls == []
+
+
+def test_answer_annotations_use_character_offsets_and_preserve_the_bilingual_answer():
+    answer = Answer("🙂要件をチームで確認します。", "我会和团队一起确认需求。")
+    text = ScriptedText([{
+        "terms": ["チーム", "確認", "要件"],
+        "labels": ["team", "かくにん", "ようけん"],
+        "contexts": ["", "", ""],
+    }])
+
+    annotated = asyncio.run(InterviewService(text).annotate_answer(answer))
+
+    assert text.calls == [("annotate_answer", answer.ja)]
+    assert (annotated.ja, annotated.zh) == (answer.ja, answer.zh)
+    assert [(ruby.start, ruby.end, ruby.label) for ruby in annotated.annotations] == [
+        (1, 3, "ようけん"), (4, 7, "team"), (8, 10, "かくにん"),
+    ]
+
+
+def test_answer_annotations_resolve_repeated_words_using_their_exact_contexts():
+    answer = Answer("上手な人は舞台の上手に立ちます。", "擅长表演的人站在舞台上手。")
+    text = ScriptedText([{
+        "terms": ["上手", "上手"],
+        "labels": ["かみて", "じょうず"],
+        "contexts": ["舞台の上手", "上手な人"],
+    }])
+
+    annotated = asyncio.run(InterviewService(text).annotate_answer(answer))
+
+    assert [(ruby.start, ruby.end, ruby.label) for ruby in annotated.annotations] == [
+        (0, 2, "じょうず"), (8, 10, "かみて"),
+    ]
+
+
+def test_answer_annotations_drop_invalid_labels_ambiguous_matches_and_overlapping_spans():
+    answer = Answer("面接で設計資料と設計手順をチームに説明します。", "我会在面试中向团队介绍设计资料和流程。")
+    text = ScriptedText([{
+        "terms": ["設計", "面接", "架空", "資料", "設計資料", "チーム", "設計手順", "説明", "チーム", "と"],
+        "labels": ["せっけい", "メンセツ", "かくう", "しりょう", "せっけいしりょう",
+                   "チーム", "せっけいてじゅん", "explanation", "team", "と"],
+        "contexts": ["", "", "", "", "", "", "存在しない設計手順", "", "", ""],
+    }])
+
+    annotated = asyncio.run(InterviewService(text).annotate_answer(answer))
+
+    assert [(answer.ja[ruby.start:ruby.end], ruby.label) for ruby in annotated.annotations] == [
+        ("設計資料", "せっけいしりょう"), ("チーム", "team"),
+    ]
+
+
+def test_answer_annotations_discard_misaligned_response_arrays():
+    answer = Answer("面接で説明します。", "我会在面试中说明。")
+    text = ScriptedText([{
+        "terms": ["面接", "説明"],
+        "labels": ["めんせつ"],
+        "contexts": ["", ""],
+    }])
+
+    assert asyncio.run(InterviewService(text).annotate_answer(answer)) == answer
+
+
+def test_answer_without_kanji_or_katakana_needs_no_annotation_request():
+    text = ScriptedText([])
+    answer = Answer("はい。", "是的。")
+
+    assert asyncio.run(InterviewService(text).annotate_answer(answer)) == answer
+    assert text.calls == []

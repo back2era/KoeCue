@@ -5,6 +5,7 @@ from time import monotonic
 
 from PySide6.QtCore import QThread, Signal
 
+from .answer_format import DEFAULT_ANSWER_LEVEL
 from .audio import AudioBuffer, AudioError, capture, check_topology
 from .config import OPENAI
 from .interview import InterviewService
@@ -29,7 +30,7 @@ class LiveWorker(QThread):
     answer = Signal(object, object, str, bool)
 
     def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False,
-                 facts=(), personal_info=PersonalInfo(), provider=OPENAI):
+                 facts=(), personal_info=PersonalInfo(), provider=OPENAI, answer_level=DEFAULT_ANSWER_LEVEL):
         super().__init__(parent)
         self.generation = generation
         self.session_id = session_id
@@ -37,6 +38,7 @@ class LiveWorker(QThread):
         self.key = key
         self.provider = provider
         self.auto_answer = auto_answer
+        self.answer_level = answer_level
         self.facts = facts
         self.personal_info = personal_info
         self.sharing_revoked = Event()
@@ -260,6 +262,7 @@ class LiveWorker(QThread):
 
     async def suggest(self, row_id, text, automatic):
         facts, personal_info = self.facts, self.personal_info
+        level = self.answer_level
         if self.sharing_revoked.is_set():
             facts, personal_info = (), PersonalInfo()
         scoped = bool(facts or personal_info)
@@ -271,7 +274,7 @@ class LiveWorker(QThread):
         self.answer.emit(row_id, None, ANSWER_PENDING, scoped)
         try:
             answer = await self.interview.suggest(
-                text, automatic=automatic, facts=facts, personal_info=personal_info, allowed=allowed,
+                text, automatic=automatic, facts=facts, personal_info=personal_info, level=level, allowed=allowed,
             )
             if not allowed():
                 raise asyncio.CancelledError
