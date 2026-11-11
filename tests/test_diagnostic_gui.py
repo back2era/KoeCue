@@ -148,6 +148,54 @@ def test_glass_layout_keeps_history_visible_and_settings_in_sync():
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_answer_defaults_to_focus_readings_and_expands_without_changing_copy(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant.__main__ import MainWindow
+    from ai_japanese_interview_assistant.cloud_gui import Row
+    from ai_japanese_interview_assistant.answer_format import Highlight, RubyAnnotation
+    from ai_japanese_interview_assistant.interview import Answer
+
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    cloud = window.cloud
+    rendered = []
+    try:
+        def render(text, annotations=(), **options):
+            rendered.append((text, annotations, options))
+
+        monkeypatch.setattr(cloud.answer_ja, "set_answer", render)
+        ja = "実装の前にチームで要件を確認し、役割と優先順位を整理します。次にテストを進めます。"
+        terms = ("実装", "チーム", "要件", "役割", "優先順位", "整理", "テスト")
+        labels = ("じっそう", "team", "ようけん", "やくわり", "ゆうせんじゅんい", "せいり", "test")
+        annotations = tuple(RubyAnnotation(ja.index(term), ja.index(term) + len(term), label)
+                            for term, label in zip(terms, labels))
+        highlights = tuple(Highlight(ja.index(term), ja.index(term) + len(term))
+                           for term in ("要件", "優先順位", "テスト"))
+        zh = "先确认需求和优先级，再进行测试。"
+        answer = Answer(ja, zh, annotations, highlights)
+        key = (1, 1, "sample")
+        cloud.rows[key] = Row(ja="どう進めますか。", finalized=True, answer=answer)
+        cloud.mark_changed(key)
+        cloud.render_history()
+
+        assert cloud.full_annotations.isVisible()
+        assert tuple(ja[span.start:span.end] for span in rendered[-1][1]) == ("要件", "優先順位", "テスト")
+        assert rendered[-1][2]["highlights"] == highlights
+        assert rendered[-1][2]["paragraph_breaks"] == (ja.index("次に"),)
+        cloud.full_annotations.click()
+        assert rendered[-1][1] == annotations
+        cloud.copy.click()
+        assert app.clipboard().text() == f"{ja}\n\n{zh}"
+        cloud.full_annotations.click()
+        assert len(rendered[-1][1]) == 3
+    finally:
+        window.close()
+        wait_until(app, lambda: not window.isVisible())
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
 def test_application_waveform_icon_reaches_main_window_and_settings():
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PySide6.QtWidgets import QApplication
@@ -275,7 +323,7 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
                 "draft": {"before_ja": answer_text, "before_zh": "好的，请您介绍。",
                           "after_ja": "", "after_zh": "", "fact_ids": []},
                 "verify_answer": {"safe": True},
-                "annotate_answer": {"terms": ["願"], "labels": ["ねが"], "contexts": [""]},
+                "annotate_answer": {"terms": ["願"], "labels": ["ねが"], "contexts": [""], "focus_terms": []},
             }[name]
             return httpx.Response(200, json={"status": "completed", "output": [{
                 "type": "message",

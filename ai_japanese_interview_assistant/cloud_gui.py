@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from .answer_display import compact_annotations, paragraph_breaks
 from .answer_format import ANSWER_LEVELS, DEFAULT_ANSWER_LEVEL
 from .diagnostic import DeviceScan
 from .config import OPENAI, PROVIDERS
@@ -175,6 +176,10 @@ class CloudPane(QWidget):
         self.answer_ja = RubyLabel()
         self.answer_zh = plain_label("", "answerTranslation")
         self.answer_zh.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.answer_translation_rule = self.rule()
+        self.full_annotations = QPushButton("全部标注")
+        self.full_annotations.setCheckable(True)
+        self.full_annotations.setToolTip("切换重点标注和全部平假名、英文标注")
         self.answer_status = plain_label("", "muted")
         self.listening_badge = plain_label("", "listeningBadge")
         self.listening_badge.setWordWrap(False)
@@ -205,6 +210,7 @@ class CloudPane(QWidget):
         self.retry.clicked.connect(self.retry_translation)
         self.suggest.clicked.connect(self.request_answer)
         self.copy.clicked.connect(self.copy_answer)
+        self.full_annotations.toggled.connect(self.render_answer)
         self.history.itemSelectionChanged.connect(self.select_row)
         self.history.itemClicked.connect(self.show_captions)
         self.settings_toggle.toggled.connect(self.toggle_settings)
@@ -269,9 +275,13 @@ class CloudPane(QWidget):
         answer_card = glass_panel("answerCard")
         answer_layout = QVBoxLayout(answer_card)
         answer_layout.setContentsMargins(15, 12, 15, 12)
-        answer_layout.setSpacing(8)
-        answer_layout.addWidget(plain_label("AI 推荐回答", "sectionTitle"))
+        answer_layout.setSpacing(10)
+        answer_heading = QHBoxLayout()
+        answer_heading.addWidget(plain_label("AI 推荐回答", "sectionTitle"), 1)
+        answer_heading.addWidget(self.full_annotations)
+        answer_layout.addLayout(answer_heading)
         answer_layout.addWidget(self.answer_ja)
+        answer_layout.addWidget(self.answer_translation_rule)
         answer_layout.addWidget(self.answer_zh)
         answer_layout.addWidget(self.answer_status)
         answer_actions = QHBoxLayout()
@@ -854,28 +864,46 @@ class CloudPane(QWidget):
 
     def select_row(self):
         key, row = self.current_row()
+        changed = key != self.displayed_row
+        if changed:
+            with QSignalBlocker(self.full_annotations):
+                self.full_annotations.setChecked(False)
         animate = bool(self.can_send_row(key) and self.rendered and key == self.rendered[-1])
         for widget, value in ((self.original, row.ja if row else ""), (self.translated, row.zh if row else "")):
-            if key != self.displayed_row:
+            if changed:
                 widget.set_caption("", animate=False)
             widget.set_caption(value, animate=animate and widget is self.translated)
         self.displayed_row = key
         self.original_state.setText(row.asr if row else "")
         translation = row.translation if row else ""
         self.translation_state.setText(translation)
+        self.render_answer()
+        self.controls()
+
+    def render_answer(self):
+        _, row = self.current_row()
         answer = row.answer if row else None
-        placeholder = ("每段发言识别完成后会自动生成日语回应建议。" if self.auto_answer.isChecked()
-                       else "选中字幕后可生成日语参考回答。")
         if answer:
-            self.answer_ja.set_answer(answer.ja, answer.annotations)
+            compact = compact_annotations(answer.ja, answer.annotations, answer.highlights)
+            expanded = self.full_annotations.isChecked()
+            self.full_annotations.setVisible(len(compact) < len(answer.annotations))
+            self.full_annotations.setText("收起标注" if expanded else "全部标注")
+            self.answer_ja.set_answer(
+                answer.ja, answer.annotations if expanded else compact,
+                highlights=answer.highlights, paragraph_breaks=paragraph_breaks(answer.ja),
+            )
         else:
+            self.full_annotations.hide()
+            placeholder = ("每段发言识别完成后会自动生成日语回应建议。" if self.auto_answer.isChecked()
+                           else "选中字幕后可生成日语参考回答。")
             self.answer_ja.set_answer(placeholder)
         self.answer_zh.setText(answer.zh if answer else "")
-        self.answer_zh.setVisible(bool(answer and answer.zh))
+        show_translation = bool(answer and answer.zh)
+        self.answer_translation_rule.setVisible(show_translation)
+        self.answer_zh.setVisible(show_translation)
         answer_status = row.answer_status if row else ""
         self.answer_status.setText(answer_status)
         self.answer_status.setVisible(bool(answer_status))
-        self.controls()
 
     def shutdown(self):
         if not self.closing:

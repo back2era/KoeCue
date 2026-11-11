@@ -235,15 +235,18 @@ def test_answer_annotations_use_character_offsets_and_preserve_the_bilingual_ans
         "terms": ["チーム", "確認", "要件"],
         "labels": ["team", "かくにん", "ようけん"],
         "contexts": ["", "", ""],
+        "focus_terms": ["要件", "確認"],
     }])
 
     annotated = asyncio.run(InterviewService(text).annotate_answer(answer))
 
     assert text.calls == [("annotate_answer", answer.ja)]
+    assert text.schemas["annotate_answer"]["focus_terms"] == {"type": "array", "items": {"type": "string"}}
     assert (annotated.ja, annotated.zh) == (answer.ja, answer.zh)
     assert [(ruby.start, ruby.end, ruby.label) for ruby in annotated.annotations] == [
         (1, 3, "ようけん"), (4, 7, "team"), (8, 10, "かくにん"),
     ]
+    assert [(focus.start, focus.end) for focus in annotated.highlights] == [(1, 3), (8, 10)]
 
 
 def test_answer_annotations_resolve_repeated_words_using_their_exact_contexts():
@@ -288,7 +291,67 @@ def test_answer_annotations_discard_misaligned_response_arrays():
     assert asyncio.run(InterviewService(text).annotate_answer(answer)) == answer
 
 
-def test_answer_without_kanji_or_katakana_needs_no_annotation_request():
+def test_answer_can_highlight_a_hiragana_phrase_without_ruby():
+    answer = Answer("まずははなしをききます。つぎに、やりかたをきめます。", "先听对方说，再决定怎么做。")
+    text = ScriptedText([{
+        "terms": [], "labels": [], "contexts": [],
+        "focus_terms": ["やりかた", "はなしをききます"],
+    }])
+
+    annotated = asyncio.run(InterviewService(text).annotate_answer(answer))
+
+    assert text.calls == [("annotate_answer", answer.ja)]
+    assert annotated.annotations == ()
+    assert [answer.ja[focus.start:focus.end] for focus in annotated.highlights] == ["はなしをききます", "やりかた"]
+
+
+def test_answer_highlights_keep_only_five_valid_nonoverlapping_exact_phrases():
+    answer = Answer(
+        "まず、チームで設計資料を確認します。次に、要件と制約を整理し、工程と品質を見直します。最後に、チームへ共有します。",
+        "我会和团队确认设计资料，梳理需求与限制，检查流程和质量，再与团队共享。",
+    )
+    text = ScriptedText([{
+        "terms": [], "labels": [], "contexts": [],
+        "focus_terms": [
+            "まず", "チーム", "架空の語", "設計資料を確認します。", "品質", "設計資料", "資料",
+            "設計資料", "見直します", "要件", "工程", "共有", "確認",
+        ],
+    }])
+
+    annotated = asyncio.run(InterviewService(text).annotate_answer(answer))
+
+    assert [answer.ja[focus.start:focus.end] for focus in annotated.highlights] == [
+        "設計資料", "要件", "工程", "品質", "見直します",
+    ]
+
+
+def test_answer_highlights_cover_at_most_half_of_the_answer():
+    answer = Answer("まず使いやすさを最優先します。", "我会优先考虑易用性。")
+    text = ScriptedText([{
+        "terms": [], "labels": [], "contexts": [],
+        "focus_terms": ["まず使いやすさを最優先します", "使いやすさ", "最優先"],
+    }])
+
+    annotated = asyncio.run(InterviewService(text).annotate_answer(answer))
+
+    assert [answer.ja[focus.start:focus.end] for focus in annotated.highlights] == ["使いやすさ"]
+
+
+@pytest.mark.parametrize("focus_terms", [None, "確認", [False, "存在しない"]])
+def test_malformed_focus_metadata_preserves_ruby(focus_terms):
+    answer = Answer("まず要件を確認します。", "我会先确认需求。")
+    text = ScriptedText([{
+        "terms": ["要件"], "labels": ["ようけん"], "contexts": [""],
+        "focus_terms": focus_terms,
+    }])
+
+    annotated = asyncio.run(InterviewService(text).annotate_answer(answer))
+
+    assert annotated.highlights == ()
+    assert [(ruby.start, ruby.end, ruby.label) for ruby in annotated.annotations] == [(2, 4, "ようけん")]
+
+
+def test_short_hiragana_acknowledgement_needs_no_annotation_request():
     text = ScriptedText([])
     answer = Answer("はい。", "是的。")
 

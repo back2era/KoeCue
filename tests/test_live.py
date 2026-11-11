@@ -96,10 +96,12 @@ def test_automatic_suggestion_waits_for_capacity_and_runs_without_clicking(monke
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("annotation_fails", [False, True])
-def test_answer_arrives_before_ruby_and_receives_the_current_difficulty(monkeypatch, annotation_fails):
+@pytest.mark.parametrize("annotation_fails,with_reading", [(False, True), (False, False), (True, True)])
+def test_answer_arrives_before_reading_aids_and_receives_current_difficulty(
+    monkeypatch, annotation_fails, with_reading,
+):
     from ai_japanese_interview_assistant import live
-    from ai_japanese_interview_assistant.answer_format import RubyAnnotation
+    from ai_japanese_interview_assistant.answer_format import Highlight, RubyAnnotation
 
     async def exercise():
         levels = []
@@ -107,7 +109,8 @@ def test_answer_arrives_before_ruby_and_receives_the_current_difficulty(monkeypa
         annotating = asyncio.Event()
         release = asyncio.Event()
         plain = Answer("実装します。", "我会实现。")
-        enriched = Answer(plain.ja, plain.zh, (RubyAnnotation(0, 2, "じっそう"),))
+        readings = (RubyAnnotation(0, 2, "じっそう"),) if with_reading else ()
+        enriched = Answer(plain.ja, plain.zh, readings, (Highlight(0, 2),))
 
         class Replies:
             async def suggest(self, text, *, level, **kwargs):

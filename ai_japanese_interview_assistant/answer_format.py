@@ -1,4 +1,4 @@
-"""Japanese difficulty guidance and validated ruby annotations."""
+"""Japanese difficulty guidance and validated answer markup."""
 from dataclasses import dataclass
 import re
 
@@ -12,12 +12,22 @@ ANSWER_LEVELS = {
 }
 DEFAULT_ANSWER_LEVEL = "N2"
 MAX_ANNOTATIONS = 64
+MAX_HIGHLIGHTS = 5
+MAX_HIGHLIGHT_LENGTH = 24
 
 _KANJI = re.compile(r"[々〆㐀-䶿一-鿿豈-﫿\U00020000-\U000323AF]")
 _JAPANESE_WORD = re.compile(r"[々〆ぁ-ゖー㐀-䶿一-鿿豈-﫿\U00020000-\U000323AF]+")
 _HIRAGANA = re.compile(r"[ぁ-ゖゝゞー]+")
 _KATAKANA = re.compile(r"[ァ-ヺｦ-ﾝ][ァ-ヺ・ーヽヾｦ-ﾟ]*")
 _ENGLISH = re.compile(r"[A-Za-z][A-Za-z0-9 .’'+&/–-]*")
+_FOCUS_TERM = re.compile(r"[\w .・+#/／&＆’'–-]+")
+_FOCUS_FILLERS = {
+    "はい", "いいえ", "こんにちは", "こんばんは", "ありがとうございます", "承知しました",
+    "わかりました", "分かりました", "よろしくお願いします", "よろしくお願いいたします",
+    "お願いいたします", "お願いします", "まず", "次に", "つぎに", "最後に", "さいごに",
+    "また", "そして", "そのため", "例えば", "たとえば", "です", "ます", "しました",
+    "と思います", "と考えます",
+}
 
 
 @dataclass(frozen=True)
@@ -27,8 +37,18 @@ class RubyAnnotation:
     label: str
 
 
+@dataclass(frozen=True)
+class Highlight:
+    start: int
+    end: int
+
+
 def has_annotation_candidates(text):
     return bool(_KANJI.search(text) or _KATAKANA.search(text))
+
+
+def has_highlight_candidates(text):
+    return any(len(part) >= 2 and part not in _FOCUS_FILLERS for part in re.findall(r"\w+", text))
 
 
 def _valid_pair(term, label):
@@ -71,4 +91,27 @@ def resolve_annotations(text, terms, labels, contexts):
         readings = candidates[start, end]
         if len(readings) == 1 and not any(start < item.end and item.start < end for item in result):
             result.append(RubyAnnotation(start, end, next(iter(readings))))
+    return tuple(sorted(result, key=lambda item: item.start))
+
+
+def resolve_highlights(text, terms):
+    if not isinstance(terms, list):
+        return ()
+    remaining = sum(not char.isspace() for char in text) // 2
+    result = []
+    for term in terms:
+        if (not isinstance(term, str) or not 2 <= len(term) <= min(MAX_HIGHLIGHT_LENGTH, remaining)
+                or term in _FOCUS_FILLERS or term != term.strip() or not _FOCUS_TERM.fullmatch(term)
+                or not any(char.isalnum() for char in term)):
+            continue
+        start = _unique_offset(text, term)
+        if start is None:
+            continue
+        end = start + len(term)
+        if any(start < item.end and item.start < end for item in result):
+            continue
+        result.append(Highlight(start, end))
+        remaining -= len(term)
+        if len(result) == MAX_HIGHLIGHTS or remaining < 2:
+            break
     return tuple(sorted(result, key=lambda item: item.start))

@@ -297,5 +297,5 @@ class LiveWorker(QThread):
             except Exception:
                 record(LogEvent.API_ERROR)
                 return
-            if allowed() and annotated.annotations:
+            if allowed() and (annotated.annotations or annotated.highlights):
                 self.answer.emit(row_id, annotated, "建议已生成", scoped)

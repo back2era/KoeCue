@@ -26,7 +26,7 @@ def label(monkeypatch):
         glass.apply_theme(app, "black")
 
 
-def _ink_bands(image):
+def _ink_rows(image):
     background = image.pixelColor(image.width() - 1, 0)
     rows = {}
     for y in range(image.height()):
@@ -34,6 +34,11 @@ def _ink_bands(image):
         ink = [(x, color) for x, color in pixels if _color_distance(color, background) > 36]
         if ink:
             rows[y] = ink
+    return rows
+
+
+def _ink_bands(image):
+    rows = _ink_rows(image)
     first, second = max(zip(rows, tuple(rows)[1:]), key=lambda pair: pair[1] - pair[0])
     assert second > first + 1
     return [pixel for y, pixels in rows.items() if y <= first for pixel in pixels], [
@@ -82,6 +87,17 @@ def test_answer_wraps_and_keeps_paragraphs_at_narrow_width(label):
     assert label.heightForWidth(460) < wide_height
 
 
+def test_english_gloss_uses_the_available_column_width(label):
+    widths = []
+    for gloss in ("demonstration", "demonstration recording"):
+        label.set_answer("デモ", (SimpleNamespace(start=0, end=2, label=gloss),))
+        label.resize(240, label.heightForWidth(240))
+        reading, _ = _ink_bands(label.grab().toImage())
+        widths.append(max(x for x, _ in reading) - min(x for x, _ in reading))
+
+    assert widths[1] > widths[0] + 25
+
+
 def test_answer_without_annotations_preserves_literal_text_and_selection(label):
     from PySide6.QtCore import Qt
 
@@ -92,3 +108,58 @@ def test_answer_without_annotations_preserves_literal_text_and_selection(label):
     assert label.textFormat() == Qt.TextFormat.PlainText
     label.setSelection(1, 3)
     assert label.selectedText() == "日本語"
+
+
+@pytest.mark.parametrize("with_ruby", [False, True])
+def test_emphasis_tints_only_the_selected_part_of_a_word(label, with_ruby):
+    from PySide6.QtGui import QPalette
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant.glass import apply_theme
+
+    apply_theme(QApplication.instance(), "ocean")
+    annotation = SimpleNamespace(start=0, end=2, label="けいけん")
+    label.set_answer(
+        "経験", (annotation,) if with_ruby else (), highlights=(SimpleNamespace(start=1, end=2),),
+    )
+    label.resize(150, label.heightForWidth(150))
+    image = label.grab().toImage()
+    if with_ruby:
+        _, base = _ink_bands(image)
+    else:
+        base = [pixel for row in _ink_rows(image).values() for pixel in row]
+    midpoint = (min(x for x, _ in base) + max(x for x, _ in base)) / 2
+    foreground = label.palette().color(QPalette.ColorRole.WindowText)
+    first_distance = min(_color_distance(pixel, foreground) for x, pixel in base if x < midpoint)
+    second_distance = min(_color_distance(pixel, foreground) for x, pixel in base if x > midpoint)
+    assert second_distance > first_distance + 15
+
+
+def test_display_paragraph_break_preserves_original_clipboard_text(label):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    answer = "経験があります。今も学んでいます。"
+    annotation = SimpleNamespace(start=0, end=2, label="けいけん")
+    label.set_answer(answer, (annotation,))
+    single_line_height = label.heightForWidth(480)
+    label.set_answer(answer, (annotation,), paragraph_breaks=(answer.index("今"),))
+
+    assert label.heightForWidth(480) > single_line_height + label.font().pixelSize()
+    assert label.text() == answer
+    QTest.keyClick(label, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert QApplication.clipboard().text() == answer
+
+
+def test_closing_punctuation_wraps_with_an_annotated_character(label):
+    from PySide6.QtGui import QFontMetricsF
+
+    metrics = QFontMetricsF(label.font())
+    width = round(metrics.horizontalAdvance("先検討") + 5)
+    label.set_answer("先検討。", (SimpleNamespace(start=2, end=3, label="と"),))
+    label.resize(width, label.heightForWidth(width))
+    natural = label.grab().toImage()
+
+    label.set_answer("先検\n討。", (SimpleNamespace(start=3, end=4, label="と"),))
+    label.resize(width, label.heightForWidth(width))
+    assert natural == label.grab().toImage()
