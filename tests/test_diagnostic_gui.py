@@ -5,6 +5,34 @@ from time import monotonic, sleep
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def local_desktop_storage(tmp_path, monkeypatch):
+    if os.environ.get("AIJA_TEST_GUI") != "1":
+        return
+    from ai_japanese_interview_assistant import cloud_gui
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    keys = {}
+
+    def vault(operation, value="", provider=None):
+        if operation == "read":
+            return keys.get(provider.label, "")
+        if operation == "save":
+            keys[provider.label] = value
+        elif operation == "delete":
+            keys.pop(provider.label, None)
+
+    monkeypatch.setattr(cloud_gui, "credential", vault)
+
+
+def wait_until(app, condition):
+    deadline = monotonic() + 5
+    while not condition() and monotonic() < deadline:
+        app.processEvents()
+        sleep(0.01)
+    assert condition()
+
+
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
 def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -22,10 +50,7 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
         assert not window.cloud.scroll.isAncestorOf(window.cloud.history)
         assert not window.cloud.scroll.isAncestorOf(window.cloud.stop)
         pane = window.diagnostic
-        deadline = monotonic() + 5
-        while (pane.scan is not None or window.cloud.scan is not None) and monotonic() < deadline:
-            app.processEvents()
-            sleep(0.01)
+        wait_until(app, lambda: pane.scan is None and window.cloud.provider.isEnabled())
         assert pane.scan is None
         assert window.cloud.scan is None
         assert pane.device.count() > 1
@@ -43,6 +68,7 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
         cloud.key.setText("temporary-openai")
         cloud.consent.setChecked(True)
         cloud.provider.setCurrentIndex(cloud.provider.findData("deepseek"))
+        wait_until(app, lambda: cloud.provider.isEnabled())
         assert cloud.key.text() == ""
         assert cloud.api_key() == "test-deepseek"
         assert not cloud.consent.isChecked()
@@ -64,7 +90,7 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
         assert not cloud.auto_answer.isChecked()
     finally:
         window.close()
-        app.processEvents()
+        wait_until(app, lambda: not window.isVisible())
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
@@ -224,11 +250,7 @@ def test_history_keeps_old_rows_and_scroll_position_when_a_new_segment_arrives(m
     window.show()
     cloud = window.cloud
     try:
-        deadline = monotonic() + 3
-        while (window.diagnostic.scan is not None or cloud.scan is not None) and monotonic() < deadline:
-            app.processEvents()
-            sleep(0.01)
-        assert window.diagnostic.scan is None and cloud.scan is None
+        wait_until(app, lambda: window.diagnostic.scan is None and cloud.provider.isEnabled())
         cloud.session_id = 1
         cloud.state = "active"
         keys = [(1, 1, str(index)) for index in range(500)]
@@ -258,7 +280,76 @@ def test_history_keeps_old_rows_and_scroll_position_when_a_new_segment_arrives(m
         assert scroll.value() == scroll.maximum()
     finally:
         window.close()
-        app.processEvents()
+        wait_until(app, lambda: not window.isVisible())
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_settings_restore_after_closing_with_a_renumbered_audio_device(monkeypatch, tmp_path):
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant.__main__ import MainWindow
+    from ai_japanese_interview_assistant.audio import Device
+    from ai_japanese_interview_assistant.diagnostic import DeviceScan
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    devices = [Device(10, "会议扬声器", True, 48000, 2)]
+    monkeypatch.setattr(DeviceScan, "run", lambda self: self.result.emit(devices[:]))
+    app = QApplication.instance() or QApplication([])
+
+    def ready(window):
+        return window.cloud.provider.isEnabled() and window.diagnostic.scan is None
+
+    window = MainWindow()
+    window.show()
+    try:
+        wait_until(app, lambda: ready(window))
+        pane = window.cloud
+        pane.provider.setCurrentIndex(pane.provider.findData("deepseek"))
+        wait_until(app, lambda: pane.key.isEnabled())
+        pane.source.setCurrentIndex(1)
+        QTest.keyClicks(pane.key, "synthetic-key")
+        pane.auto_answer.setChecked(False)
+        pane.consent.setChecked(True)
+    finally:
+        window.close()
+        wait_until(app, lambda: not window.isVisible())
+
+    devices[:] = [Device(10, "其他扬声器", True, 48000, 2), Device(21, "会议扬声器", True, 48000, 2)]
+    restored = MainWindow()
+    restored.show()
+    try:
+        wait_until(app, lambda: ready(restored))
+        pane = restored.cloud
+        assert pane.provider.currentData() == "deepseek"
+        assert pane.source.currentData().index == 21
+        assert pane.key.text() == "synthetic-key"
+        assert not pane.auto_answer.isChecked()
+        assert not pane.consent.isChecked()
+        assert pane.worker is None
+        settings = tmp_path / "AIJapaneseInterviewAssistant" / "settings.ini"
+        assert "synthetic-key" not in settings.read_text(encoding="utf-8")
+        pane.use_vault("delete")
+        wait_until(app, lambda: pane.key.isEnabled())
+        assert pane.key.text() == ""
+        devices[:] = [Device(10, "其他扬声器", True, 48000, 2)]
+        pane.refresh_devices()
+        wait_until(app, lambda: pane.source.isEnabled())
+        assert pane.source.currentData() is None
+        assert "上次音源不可用" in pane.input_summary.text()
+    finally:
+        restored.close()
+        wait_until(app, lambda: not restored.isVisible())
+
+    devices.append(Device(21, "会议扬声器", True, 48000, 2))
+    reopened = MainWindow()
+    reopened.show()
+    try:
+        wait_until(app, lambda: ready(reopened))
+        assert reopened.cloud.key.text() == ""
+        assert reopened.cloud.source.currentData().index == 21
+    finally:
+        reopened.close()
+        wait_until(app, lambda: not reopened.isVisible())
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")

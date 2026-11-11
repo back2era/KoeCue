@@ -78,7 +78,7 @@ py -3.13 -m venv .venv
 
 在“编辑资料 / 本次授权”中填写并核对教育、技能、经历、项目或目标岗位的日语和中文事实句。保存后可另外勾选本次允许发送的条目。每次回答只会选择最多两条相关资料。关键词用于匹配日语问题，留空表示可供同类问题选用。可随时撤销分享，停止会话后授权重置。资料文件位于 `%LOCALAPPDATA%\AIJapaneseInterviewAssistant\profile.json`。该文件是当前 Windows 用户目录下的普通 JSON。
 
-API Key 可在密码输入框中仅供本次运行使用。开发时按所选服务商使用 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY` 或 `ANTHROPIC_API_KEY`。Windows 凭据管理器按服务商分别保存，原有 OpenAI 凭据可继续读取。切换服务商会清空输入框与本次分享授权。
+开始监听或正常关闭软件时，会保存当前的服务商、音源、自动回答开关和本次输入的 API Key。下次打开自动恢复这些设置。API Key 按服务商分别存入 Windows 凭据管理器，也可从「Windows 凭据」菜单删除。若上次的音源不可用或有同名设备，请在设置中重新选择。开发时也可以按所选服务商使用 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY` 或 `ANTHROPIC_API_KEY`。采集同意与资料分享授权每次会话重新确认。
 
 音频和会话历史在应用中只保留于内存。`%LOCALAPPDATA%\AIJapaneseInterviewAssistant\assistant.log` 滚动保留固定事件名和耗时。OpenAI 文本请求使用 `store=false`，服务端保留规则取决于 API 账户与端点。 [OpenAI 数据控制](https://developers.openai.com/api/docs/guides/your-data)
 
@@ -87,7 +87,7 @@ API Key 可在密码输入框中仅供本次运行使用。开发时按所选服
 | 项目 | 结果 |
 | --- | --- |
 | 干净运行时与锁定依赖 | Windows 11 x64、CPython 3.13.12，`pip check` 通过 |
-| 完整自动化套件 | 51 项通过，包括离屏 Qt、真实设备枚举、字幕逐字追加、501 段历史保留和阅读位置、模拟采集生命周期及三家服务商协议替身 |
+| 完整自动化套件 | 52 项通过，包括离屏 Qt、真实设备枚举、设置恢复、字幕逐字追加、历史保留和阅读位置、模拟采集生命周期及三家服务商协议替身 |
 | 本地 Whisper | 在 Windows 11 上用真实模型离线识别公开日语发音片段。测试片段由 Spesco 发布，CC BY-SA 4.0。 [Ja-konnichiwa.ogg](https://commons.wikimedia.org/wiki/File:Ja-konnichiwa.ogg) |
 | 实际采集 | 待验证浏览器、Teams、Zoom、麦克风、USB/蓝牙切换及真机生命周期 |
 | 真实 API 与 30 分钟联调 | 待在有可用 Key 和已授权素材的环境验证，包括错误 Key、限流、断网、分类质量和回答时长 |

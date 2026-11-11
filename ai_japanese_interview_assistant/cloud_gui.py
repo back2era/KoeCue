@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 import os
 
-from PySide6.QtCore import QTimer, Signal, Slot, Qt
+from PySide6.QtCore import QSignalBlocker, QTimer, Signal, Slot, Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFrame, QHeaderView, QHBoxLayout, QLabel, QLineEdit, QMenu,
     QPushButton, QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -14,6 +14,7 @@ from .credentials import credential
 from .interview import Answer
 from .live import LiveWorker
 from .profile_gui import PrivateIO, ProfileDialog
+from .settings import Preferences, load_preferences, save_preferences
 
 
 CAPTION_STYLE = """
@@ -112,6 +113,10 @@ class CloudPane(QWidget):
         self.worker = None
         self.scan = None
         self.credential_worker = None
+        self.settings_worker = None
+        self.preferences = Preferences()
+        self.preferences_ready = False
+        self.audio_selection = ("", False)
         self.vault_operation = ""
         self.vault_provider = None
         self.approved_facts = ()
@@ -120,6 +125,7 @@ class CloudPane(QWidget):
         self.capture_available = True
         self.state = "idle"
         self.closing = False
+        self.close_save_attempted = False
         self.rows = {}
         self.rendered = []
         self.changed_rows = set()
@@ -134,7 +140,7 @@ class CloudPane(QWidget):
             self.provider.addItem(provider.label, code)
         self.key = QLineEdit()
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.key.setPlaceholderText("API Key · 仅在本次运行使用")
+        self.key.setPlaceholderText("API Key")
         self.vault_button = QPushButton("Windows 凭据")
         vault_menu = QMenu(self.vault_button)
         for action, operation in (("读取已保存的 Key", "read"), ("保存当前 Key", "save"), ("删除已保存的 Key", "delete")):
@@ -209,7 +215,7 @@ class CloudPane(QWidget):
         self.history.itemClicked.connect(self.show_captions)
         self.settings_toggle.toggled.connect(self.toggle_settings)
         self.latest.clicked.connect(self.select_latest)
-        self.provider_changed()
+        self.run_settings_io(load_preferences, self.restore_preferences)
         self.refresh_devices()
         self.select_row()
 
@@ -342,11 +348,15 @@ class CloudPane(QWidget):
         self.scroll.verticalScrollBar().setValue(0)
 
     def source_changed(self):
+        device = self.source.currentData()
+        self.audio_selection = (device.name, device.loopback) if device else ("", False)
         self.consent.setChecked(False)
         self.controls()
 
     def refresh_devices(self):
-        self.source.clear()
+        with QSignalBlocker(self.source):
+            self.source.clear()
+        self.consent.setChecked(False)
         self.scan = DeviceScan(self)
         self.scan.result.connect(self.set_devices)
         self.scan.failed.connect(self.asr_status.setText)
@@ -355,12 +365,23 @@ class CloudPane(QWidget):
         self.scan.start()
 
     def set_devices(self, devices):
-        self.source.addItem("选择音频来源", None)
-        for device in devices:
-            kind = "系统播放" if device.loopback else "麦克风 / 输入"
-            self.source.addItem(f"{kind} · {device.name} · #{device.index}", device)
+        with QSignalBlocker(self.source):
+            self.source.addItem("选择音频来源", None)
+            for device in devices:
+                kind = "系统播放" if device.loopback else "麦克风 / 输入"
+                self.source.addItem(f"{kind} · {device.name} · #{device.index}", device)
+        self.restore_audio_source()
         if not devices:
             self.asr_status.setText("未找到可用的 WASAPI 输入")
+
+    def restore_audio_source(self):
+        matches = []
+        for index in range(1, self.source.count()):
+            device = self.source.itemData(index)
+            if (device.name, device.loopback) == self.audio_selection:
+                matches.append(index)
+        with QSignalBlocker(self.source):
+            self.source.setCurrentIndex(matches[0] if len(matches) == 1 else 0)
 
     def scan_finished(self):
         self.scan.deleteLater()
@@ -381,7 +402,7 @@ class CloudPane(QWidget):
         self.key.clear()
         self.consent.setChecked(False)
         self.approved_facts = ()
-        self.key.setPlaceholderText(f"{provider.label} API Key · 仅在本次运行使用")
+        self.key.setPlaceholderText(f"{provider.label} API Key")
         self.consent.setText(
             "已取得必要同意，允许将所选来源的音频及转写发送至 OpenAI"
             if provider is OPENAI else
@@ -389,10 +410,13 @@ class CloudPane(QWidget):
         )
         self.asr_status.setText("转写未连接" if provider is OPENAI else "本地日语转写未启动")
         self.text_status.setText(f"{provider.label} 文本 API 未连接")
+        if self.preferences_ready and not self.closing:
+            self.use_vault("read")
         self.controls()
 
     def controls(self):
-        idle = self.worker is None and self.scan is None and self.credential_worker is None and not self.closing
+        idle = (self.worker is None and self.scan is None and self.credential_worker is None
+                and self.settings_worker is None and not self.closing)
         configurable = idle and self.state != "paused"
         for widget in (self.source, self.refresh, self.provider, self.key, self.vault_button, self.consent, self.auto_answer, self.profile):
             widget.setEnabled(configurable)
@@ -434,7 +458,7 @@ class CloudPane(QWidget):
             )
         device = self.source.currentData()
         if device is None:
-            source = "请选择音源"
+            source = "上次音源不可用，请重新选择" if self.audio_selection[0] and self.scan is None else "请选择音源"
         else:
             source = "系统音频" if device.loopback else "麦克风"
         self.input_summary.setText(f"{source} · 日语 → 中文")
@@ -447,6 +471,7 @@ class CloudPane(QWidget):
             self.session_id += 1
         self.generation += 1
         self.state = "active"
+        self.persist_preferences()
         self.settings_toggle.setChecked(False)
         self.show_captions()
         self.asr_status.setText("正在启动转写")
@@ -589,7 +614,7 @@ class CloudPane(QWidget):
                     self.mark_changed(key)
 
     def use_vault(self, operation):
-        if self.credential_worker is not None:
+        if self.credential_worker is not None or self.settings_worker is not None:
             return
         key = self.key.text().strip() if operation == "save" else ""
         provider = self.selected_provider()
@@ -609,6 +634,10 @@ class CloudPane(QWidget):
         operation = self.vault_operation
         if operation == "read" and value:
             self.key.setText(value)
+        elif operation == "delete":
+            self.key.clear()
+        elif operation == "save":
+            self.key.setModified(False)
         self.text_status.setText({"read": "已读取已保存的 Key" if value else "未找到已保存的 Key",
                                   "save": "Key 已保存到 Windows 凭据管理器",
                                   "delete": "已清除保存的 Key"}[operation])
@@ -618,6 +647,55 @@ class CloudPane(QWidget):
         self.credential_worker = None
         self.vault_operation = ""
         self.vault_provider = None
+        self.controls()
+        self.idle.emit()
+
+    def run_settings_io(self, operation, receive):
+        self.settings_worker = PrivateIO(operation, self)
+        self.settings_worker.result.connect(receive)
+        self.settings_worker.failed.connect(self.text_status.setText)
+        self.settings_worker.finished.connect(self.settings_finished)
+        self.controls()
+        self.settings_worker.start()
+
+    @Slot(object)
+    def restore_preferences(self, preferences):
+        self.preferences = preferences
+        self.audio_selection = (preferences.audio_name, preferences.audio_loopback)
+        with QSignalBlocker(self.provider):
+            self.provider.setCurrentIndex(self.provider.findData(preferences.provider))
+        self.auto_answer.setChecked(preferences.auto_answer)
+        self.restore_audio_source()
+
+    def persist_preferences(self):
+        preferences = Preferences(self.provider.currentData(), *self.audio_selection, self.auto_answer.isChecked())
+        changed = preferences != self.preferences
+        key = self.key.text().strip() if self.key.isModified() else ""
+        if not changed and not key:
+            return
+        provider = self.selected_provider()
+
+        def save():
+            if changed:
+                save_preferences(preferences)
+            if key:
+                credential("save", key, provider)
+            return preferences
+
+        self.run_settings_io(save, self.preferences_saved)
+
+    @Slot(object)
+    def preferences_saved(self, preferences):
+        self.preferences = preferences
+        self.key.setModified(False)
+
+    def settings_finished(self):
+        self.settings_worker.deleteLater()
+        self.settings_worker = None
+        if not self.preferences_ready:
+            self.preferences_ready = True
+            if not self.closing:
+                self.provider_changed()
         self.controls()
         self.idle.emit()
 
@@ -691,6 +769,11 @@ class CloudPane(QWidget):
         self.controls()
 
     def shutdown(self):
-        self.closing = True
-        self.stop_session()
-        return self.worker is None and self.scan is None and self.credential_worker is None
+        if not self.closing:
+            self.closing = True
+            self.stop_session()
+        if self.settings_worker is None and self.credential_worker is None and not self.close_save_attempted:
+            self.close_save_attempted = True
+            self.persist_preferences()
+        return (self.worker is None and self.scan is None and self.credential_worker is None
+                and self.settings_worker is None)
