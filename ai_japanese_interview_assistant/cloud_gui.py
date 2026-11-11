@@ -100,6 +100,8 @@ class CloudPane(QWidget):
         self.rendered = []
         self.changed_rows = set()
         self.displayed_row = None
+        self.preview_key = None
+        self.preview_text = ""
         self.dirty = False
 
         self.source = GlassComboBox()
@@ -159,6 +161,8 @@ class CloudPane(QWidget):
         empty_layout.addWidget(self.empty_history)
         self.original = CaptionLabel("等待日语语音…")
         self.translated = CaptionLabel("等待中文译文…")
+        self.live_caption = plain_label("", "captionText")
+        self.live_caption.setAccessibleName("正在识别的日语")
         self.original_state = plain_label("", "captionState")
         self.translation_state = plain_label("", "captionState")
         self.answer_ja = plain_label("", "answerText")
@@ -220,6 +224,15 @@ class CloudPane(QWidget):
         header.addWidget(plain_label("实时字幕", "sectionTitle"), 1)
         header.addWidget(self.listening_badge)
         layout.addLayout(header)
+
+        self.preview_card = glass_panel("glassInset")
+        preview = QVBoxLayout(self.preview_card)
+        preview.setContentsMargins(13, 8, 13, 9)
+        preview.setSpacing(3)
+        preview.addWidget(plain_label("日语 · 识别中", "muted"))
+        preview.addWidget(self.live_caption)
+        self.preview_card.hide()
+        layout.addWidget(self.preview_card)
 
         self.scroll = QScrollArea()
         self.scroll.setObjectName("captionScroll")
@@ -514,6 +527,7 @@ class CloudPane(QWidget):
                                  facts=self.approved_facts, personal_info=self.approved_personal,
                                  provider=self.selected_provider())
         self.worker.status.connect(self.set_status)
+        self.worker.partial_transcript.connect(self.add_partial_transcript)
         self.worker.transcript.connect(self.add_transcript)
         self.worker.order.connect(self.set_order)
         self.worker.translation.connect(self.add_translation)
@@ -532,6 +546,7 @@ class CloudPane(QWidget):
         if self.worker is not None:
             self.state = "paused"
             self.worker.stop()
+            self.clear_live_caption()
             self.asr_status.setText("已暂停")
             self.text_status.setText("文本请求已暂停")
             self.audio_status.setText("音频已暂停")
@@ -539,6 +554,7 @@ class CloudPane(QWidget):
 
     def stop_session(self):
         self.state = "idle"
+        self.clear_live_caption()
         if self.worker is not None:
             self.worker.stop()
         self.consent.setChecked(False)
@@ -552,6 +568,7 @@ class CloudPane(QWidget):
     def worker_finished(self):
         self.worker.deleteLater()
         self.worker = None
+        self.clear_live_caption()
         if self.state == "active":
             self.state = "idle"
             self.consent.setChecked(False)
@@ -569,10 +586,31 @@ class CloudPane(QWidget):
         self.controls()
         self.idle.emit()
 
+    @Slot(object)
+    def add_partial_transcript(self, data):
+        key, part = data
+        if (self.state != "active" or key[:2] != (self.session_id, self.generation)
+                or key in self.rows or not part.text.strip()):
+            return
+        if key != self.preview_key:
+            self.preview_key, self.preview_text = key, ""
+        if part.text.startswith(self.preview_text) and part.text != self.preview_text:
+            self.preview_text = part.text
+            self.live_caption.setText(part.text if len(part.text) <= 84 else "…" + part.text[-84:])
+            self.preview_card.show()
+
+    def clear_live_caption(self):
+        self.preview_key, self.preview_text = None, ""
+        self.live_caption.clear()
+        self.preview_card.hide()
+
+    @Slot(object)
     def add_transcript(self, data):
         key, part = data
         if self.state != "active" or key in self.rows or not (part.final or part.failed):
             return
+        if key == self.preview_key:
+            self.clear_live_caption()
         if part.failed:
             self.rows[key] = Row(asr="转写失败")
         elif part.text:
@@ -803,7 +841,7 @@ class CloudPane(QWidget):
         for widget, value in ((self.original, row.ja if row else ""), (self.translated, row.zh if row else "")):
             if key != self.displayed_row:
                 widget.set_caption("", animate=False)
-            widget.set_caption(value, animate=animate)
+            widget.set_caption(value, animate=animate and widget is self.translated)
         self.displayed_row = key
         self.original_state.setText(row.asr if row else "")
         translation = row.translation if row else ""

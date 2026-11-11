@@ -1,6 +1,7 @@
 """Optional local Japanese speech recognition using the multilingual Whisper base model."""
 import argparse
 import asyncio
+from collections import deque
 from contextlib import aclosing
 import os
 
@@ -10,6 +11,8 @@ from .profiles import app_directory
 MODEL_REPO = "Systran/faster-whisper-base"
 MODEL_REVISION = "a80717a3a48b1b28aa687bca146cb7301feae1b1"
 MODEL_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
+PREVIEW_STRIDE = 57600  # 1.2 seconds of 24 kHz PCM16 mono
+MAX_QUEUED_TURNS = 2
 
 
 class LocalAsrError(Exception):
@@ -49,9 +52,34 @@ def load_decoder():
     return decode
 
 
+def _preview_suffix(previous, current):
+    boundary = len(previous)
+    if current.startswith(previous):
+        return current[boundary:]
+
+    # Japanese hypotheses can change an earlier spelling while keeping the spoken
+    # text at the boundary. Append only if a nearby six-character match is unambiguous.
+    anchor_length = 6
+    if boundary < anchor_length:
+        return ""
+    anchor = previous[-anchor_length:]
+    start = max(0, boundary - anchor_length - 4)
+    stop = boundary + 4
+    match = current.find(anchor, start, stop)
+    if match < 0 or current.find(anchor, match + 1, stop) >= 0:
+        return ""
+    return current[match + anchor_length:]
+
+
 async def run_local_transcription(decode, frames, on_event, *, on_ending=lambda: None):
-    """Keep audio collection independent of CPU inference and bound queued turns."""
-    turns = asyncio.Queue(maxsize=2)
+    """Collect audio independently and prioritize committed turns on one decoder lane."""
+    turns = deque()
+    available = asyncio.Event()
+    pending = bytearray()
+    sequence = 1
+    preview_at = PREVIEW_STRIDE
+    accepted_preview = ""
+    input_finished = False
     ending = False
 
     def end_session():
@@ -61,37 +89,65 @@ async def run_local_transcription(decode, frames, on_event, *, on_ending=lambda:
             on_ending()
 
     async def collect():
-        pending = bytearray()
-        async with aclosing(frames):
-            try:
+        nonlocal sequence, preview_at, accepted_preview, input_finished
+        try:
+            async with aclosing(frames):
                 async for command in frames:
                     if command is not None:
                         pending.extend(command)
+                        if len(pending) >= preview_at:
+                            available.set()
                     elif pending:
-                        try:
-                            turns.put_nowait(bytes(pending))
-                        except asyncio.QueueFull as exc:
-                            raise AudioError("本机语音识别跟不上采集速度，已停止监听。") from exc
+                        if len(turns) >= MAX_QUEUED_TURNS:
+                            raise AudioError("本机语音识别跟不上采集速度，已停止监听。")
+                        turns.append((sequence, bytes(pending), bool(accepted_preview)))
                         pending.clear()
-            except BaseException:
-                end_session()
-                raise
-        await turns.put(None)
+                        sequence += 1
+                        preview_at = PREVIEW_STRIDE
+                        accepted_preview = ""
+                        available.set()
+        except BaseException:
+            end_session()
+            raise
+        input_finished = True
+        available.set()
 
     async def recognize():
-        sequence = 0
+        nonlocal preview_at, accepted_preview
         previous = None
-        while (pcm := await turns.get()) is not None:
-            text = await asyncio.to_thread(decode, pcm)
-            if ending:
+        while not ending:
+            if turns:
+                turn, pcm, had_preview = turns.popleft()
+                text = await asyncio.to_thread(decode, pcm)
+                if ending:
+                    return
+                if text or had_preview:
+                    item = f"local-{turn}"
+                    on_event({"type": "input_audio_buffer.committed", "item_id": item,
+                              "previous_item_id": previous})
+                    on_event({"type": "conversation.item.input_audio_transcription.completed", "item_id": item,
+                              "transcript": text})
+                    previous = item
+            elif input_finished:
                 return
-            if not text:
-                continue
-            sequence += 1
-            item = f"local-{sequence}"
-            on_event({"type": "input_audio_buffer.committed", "item_id": item, "previous_item_id": previous})
-            on_event({"type": "conversation.item.input_audio_transcription.completed", "item_id": item, "transcript": text})
-            previous = item
+            elif len(pending) >= preview_at:
+                # Snapshot the current utterance only when the decoder is free. Later audio
+                # replaces any unstarted preview, while a commit supersedes an in-flight one.
+                turn = sequence
+                pcm = bytes(pending)
+                preview_at = len(pcm) + PREVIEW_STRIDE
+                text = await asyncio.to_thread(decode, pcm)
+                if ending or input_finished or turn != sequence:
+                    continue
+                # Whisper often inserts terminal punctuation while the speaker is still talking.
+                text = text.rstrip("。！？、…,.!? \t")
+                if delta := _preview_suffix(accepted_preview, text):
+                    accepted_preview = text
+                    on_event({"type": "conversation.item.input_audio_transcription.delta", "item_id": f"local-{turn}",
+                              "delta": delta})
+            else:
+                available.clear()
+                await available.wait()
 
     tasks = (asyncio.create_task(collect()), asyncio.create_task(recognize()))
     try:

@@ -30,6 +30,10 @@ class TranscriptBook:
     def parts(self):
         return tuple(self._parts[item] for item in self._order)
 
+    @property
+    def latest_item_id(self):
+        return self._order[-1] if self._order else None
+
     def apply(self, event):
         kind = event.get("type", "")
         item = event.get("item_id")

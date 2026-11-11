@@ -16,11 +16,14 @@ from .transcription import AudioProcessor, RealtimeError, TranscriptBook, run_tr
 
 
 ANSWER_PENDING = "正在生成建议…"
+MAX_ACTIVE_TEXT_JOBS = 8
+MAX_WAITING_ANSWERS = 32
 
 
 class LiveWorker(QThread):
     status = Signal(str, str)
     transcript = Signal(object)
+    partial_transcript = Signal(object)
     order = Signal(object)
     translation = Signal(object, str, str)
     answer = Signal(object, object, str, bool)
@@ -40,6 +43,7 @@ class LiveWorker(QThread):
         self.buffer = AudioBuffer()
         self.book = TranscriptBook()
         self.jobs = {}
+        self.waiting_answers = {}
         self.loop = None
         self.runner = None
 
@@ -59,6 +63,7 @@ class LiveWorker(QThread):
         self.personal_info = PersonalInfo()
 
     def _revoke_profile(self):
+        self.waiting_answers.clear()
         for (kind, _), task in self.jobs.items():
             if kind == "answer":
                 task.cancel()
@@ -124,7 +129,7 @@ class LiveWorker(QThread):
                     decoder = await asyncio.to_thread(load_decoder)
                     if self.isInterruptionRequested():
                         return
-                    self.status.emit("asr", "本地转写已就绪，断句后出字幕")
+                    self.status.emit("asr", "本地转写已就绪，正在接收语音")
                     await run_local_transcription(
                         decoder, self.audio_commands(), self.on_event, on_ending=self.stop_text_and_audio,
                     )
@@ -138,6 +143,7 @@ class LiveWorker(QThread):
         self.requestInterruption()
         self._clear_profile()
         self.buffer.close()
+        self.waiting_answers.clear()
         for task in self.jobs.values():
             task.cancel()
 
@@ -184,6 +190,9 @@ class LiveWorker(QThread):
         if part is None:
             return
         row_id = (self.session_id, self.generation, part.item_id)
+        if (kind == "conversation.item.input_audio_transcription.delta" and event.get("delta")
+                and part.item_id == self.book.latest_item_id):
+            self.partial_transcript.emit((row_id, part))
         if kind != "input_audio_buffer.committed" and (part.final or part.failed):
             self.transcript.emit((row_id, part))
         if kind == "input_audio_buffer.committed" or part.final or part.failed:
@@ -195,7 +204,7 @@ class LiveWorker(QThread):
 
     def start_translation(self, row_id, text):
         job_id = ("translation", row_id)
-        if len(self.jobs) >= 8:
+        if len(self.jobs) >= MAX_ACTIVE_TEXT_JOBS:
             self.translation.emit(row_id, "", "队列繁忙，可以重试")
             return
         self.start_job(job_id, self.translate, row_id, text)
@@ -205,7 +214,14 @@ class LiveWorker(QThread):
             return
         task = asyncio.create_task(handler(*args))
         self.jobs[job_id] = task
-        task.add_done_callback(lambda task: self.jobs.pop(job_id, None))
+        task.add_done_callback(lambda task: self.finish_text_job(job_id))
+
+    def finish_text_job(self, job_id):
+        self.jobs.pop(job_id, None)
+        if self.waiting_answers and not self.isInterruptionRequested() and len(self.jobs) < MAX_ACTIVE_TEXT_JOBS:
+            row_id = next(iter(self.waiting_answers))
+            text, automatic = self.waiting_answers.pop(row_id)
+            self.start_job(("answer", row_id), self.suggest, row_id, text, automatic)
 
     async def translate(self, row_id, text):
         result = ""
@@ -231,10 +247,16 @@ class LiveWorker(QThread):
             self.status.emit("text", "文本 API 已连接")
 
     def start_answer(self, row_id, text, automatic=False):
-        if len(self.jobs) >= 8:
-            self.answer.emit(row_id, None, "回答队列繁忙，可以重试", False)
+        job_id = ("answer", row_id)
+        if self.isInterruptionRequested() or job_id in self.jobs or row_id in self.waiting_answers:
             return
-        self.start_job(("answer", row_id), self.suggest, row_id, text, automatic)
+        if len(self.jobs) < MAX_ACTIVE_TEXT_JOBS and not self.waiting_answers:
+            self.start_job(job_id, self.suggest, row_id, text, automatic)
+        elif len(self.waiting_answers) < MAX_WAITING_ANSWERS:
+            self.waiting_answers[row_id] = (text, automatic)
+            self.answer.emit(row_id, None, ANSWER_PENDING, False)
+        else:
+            self.answer.emit(row_id, None, "回答队列繁忙，可以重试", False)
 
     async def suggest(self, row_id, text, automatic):
         facts, personal_info = self.facts, self.personal_info

@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from ai_japanese_interview_assistant.interview import InterviewService
+from ai_japanese_interview_assistant.interview import Answer, InterviewService
 from ai_japanese_interview_assistant.live import LiveWorker
 from ai_japanese_interview_assistant.personal import PersonalInfo
 from ai_japanese_interview_assistant.profiles import Fact
@@ -51,3 +51,43 @@ def test_stopping_worker_releases_its_authorized_snapshot():
 
     assert not worker.personal_info
     assert not worker.facts
+
+
+def test_automatic_suggestion_waits_for_capacity_and_runs_without_clicking(monkeypatch):
+    from ai_japanese_interview_assistant import live
+
+    async def exercise():
+        release = asyncio.Event()
+        answered = asyncio.Event()
+        completed = Answer("はい、お願いします。", "好的，请继续。")
+
+        class Replies:
+            async def suggest(self, text, *, automatic, **kwargs):
+                assert automatic
+                return completed
+
+        async def occupying_job():
+            await release.wait()
+
+        monkeypatch.setattr(live, "record", lambda *args: None)
+        worker = LiveWorker(1, None, "test")
+        worker.interview = Replies()
+        received = []
+
+        def receive(row_id, answer, status, scoped):
+            received.append((row_id, answer, status, scoped))
+            if answer:
+                answered.set()
+
+        worker.answer.connect(receive)
+        for index in range(8):
+            worker.start_job(("translation", index), occupying_job)
+        row_id = (0, 1, "queued")
+        worker.start_answer(row_id, "それでは説明します。", automatic=True)
+        worker.start_answer(row_id, "それでは説明します。", automatic=True)
+        assert received == [(row_id, None, live.ANSWER_PENDING, False)]
+        release.set()
+        await asyncio.wait_for(answered.wait(), 1)
+        assert [item[1] for item in received if item[1]] == [completed]
+
+    asyncio.run(exercise())
