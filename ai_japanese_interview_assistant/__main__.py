@@ -15,12 +15,14 @@ from .glass import (
     DEFAULT_THEME, BrandMark, GlassCanvas, GlassStyle, PageFade, application_icon, apply_theme, glass_panel, plain_label,
 )
 from .personal_gui import PersonalPane
+from .windows_taskbar import register_process, register_window, unregister_window
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.closing = False
+        self.taskbar_handle = None
         self.setWindowTitle("AI 日语面试助手")
         self.resize(1120, 740)
         self.setMinimumSize(620, 540)
@@ -103,6 +105,9 @@ class MainWindow(QMainWindow):
         cloud_idle = self.cloud.shutdown()
         personal_idle = self.personal.shutdown()
         if diagnostic_idle and cloud_idle and personal_idle:
+            if self.taskbar_handle is not None:
+                unregister_window(self.taskbar_handle)
+                self.taskbar_handle = None
             event.accept()
         else:
             event.ignore()
@@ -123,9 +128,11 @@ def configure_application(app):
 
 
 def main():
+    register_process()
     app = QApplication(sys.argv)
     configure_application(app)
     window = MainWindow()
+    window.taskbar_handle = register_window(window)
     window.show()
     return app.exec()
 
