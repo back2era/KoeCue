@@ -4,8 +4,8 @@ import os
 
 from PySide6.QtCore import QTimer, Signal, Slot, Qt
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QHeaderView, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QPlainTextEdit,
-    QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QFrame, QHeaderView, QHBoxLayout, QLabel, QLineEdit, QMenu,
+    QPushButton, QScrollArea, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .diagnostic import DeviceScan
@@ -14,6 +14,85 @@ from .credentials import credential
 from .interview import Answer
 from .live import LiveWorker
 from .profile_gui import PrivateIO, ProfileDialog
+
+
+CAPTION_STYLE = """
+QWidget#captionPage { background: #090a0c; }
+QWidget#captionContent, QScrollArea#captionScroll { background: #101114; }
+QFrame#liveCard, QFrame#setupCard { background: #101114; border: 1px solid #2a2c31; border-radius: 16px; }
+QFrame#answerCard { background: #17191e; border: 1px solid #26282e; border-radius: 12px; }
+QFrame#captionRule { background: #26282e; border: none; }
+QLabel { background: transparent; }
+QLabel#brandMark { color: #b3f7d1; background: #183328; border-radius: 8px; font-weight: 700; }
+QLabel#appTitle { color: #f4f5f7; font-size: 20px; font-weight: 700; }
+QLabel#sectionTitle { color: #f0f1f4; font-size: 15px; font-weight: 650; }
+QLabel#captionText { color: #f4f5f7; font-size: 22px; }
+QLabel#answerText { color: #eceef2; font-size: 16px; }
+QLabel#answerTranslation { color: #b4b8c2; font-size: 14px; }
+QLabel#muted, QLabel#captionState { color: #a5aab5; font-size: 12px; }
+QPushButton, QComboBox, QLineEdit {
+    background: #202228; color: #ebedf0; border: 1px solid #373a42; border-radius: 8px;
+    min-height: 21px; padding: 5px 11px;
+}
+QPushButton:hover, QPushButton:checked { background: #2e3239; border-color: #545966; }
+QPushButton#primaryAction { background: #b4f1ce; color: #13251b; border-color: #b4f1ce; font-weight: 650; }
+QPushButton#primaryAction:hover { background: #caf8dd; }
+QPushButton:disabled, QPushButton#primaryAction:disabled { background: #1a1c21; color: #777c87; border-color: #2a2d34; }
+QTableWidget { background: #111317; color: #eef0f4; gridline-color: #26282f; border: 1px solid #292b32; }
+QHeaderView::section { background: #202228; color: #cbd0d9; padding: 5px; border: none; }
+"""
+
+
+class CaptionLabel(QLabel):
+    def __init__(self, placeholder):
+        super().__init__(placeholder)
+        self.setObjectName("captionText")
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setWordWrap(True)
+        self.setMinimumHeight(34)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.placeholder = placeholder
+        self.shown = ""
+        self.target = ""
+        self.timer = QTimer(self)
+        self.timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.timer.timeout.connect(self.reveal_next)
+
+    def set_caption(self, text, *, animate):
+        if animate and text == self.target:
+            return
+        self.target = text
+        if not animate or not text:
+            self.shown = text
+            self.timer.stop()
+            self.setText(text or self.placeholder)
+            return
+        prefix = 0
+        for old, new in zip(self.shown, text):
+            if old != new:
+                break
+            prefix += 1
+        self.shown = text[:prefix]
+        self.setText(self.shown)
+        remaining = len(self.target) - len(self.shown)
+        if remaining:
+            self.timer.start(max(5, min(28, 420 // remaining)))
+        else:
+            self.timer.stop()
+
+    def reveal_next(self):
+        self.shown = self.target[:len(self.shown) + 1]
+        self.setText(self.shown)
+        if self.shown == self.target:
+            self.timer.stop()
+
+
+def plain_label(text, name):
+    label = QLabel(text)
+    label.setObjectName(name)
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    label.setWordWrap(True)
+    return label
 
 
 @dataclass
@@ -45,6 +124,7 @@ class CloudPane(QWidget):
         self.closing = False
         self.rows = {}
         self.rendered = []
+        self.displayed_row = None
         self.dirty = False
 
         self.source = QComboBox()
@@ -65,15 +145,13 @@ class CloudPane(QWidget):
         self.revoke = QPushButton("撤销资料分享")
         self.profile_status = QLabel("本次未授权资料分享")
         self.consent = QCheckBox()
-        self.local_hint = QLabel("首次使用本地语音需按 README 安装组件并下载日语模型。")
-        self.local_hint.setWordWrap(True)
-        self.auto_answer = QCheckBox("为本次会话自动识别问题并生成回答建议")
+        self.auto_answer = QCheckBox("自动识别问题并生成回答")
         self.start = QPushButton("开始云端监听")
         self.pause = QPushButton("暂停")
         self.stop = QPushButton("停止")
         self.retry = QPushButton("重试所选翻译")
-        self.suggest = QPushButton("为所选段生成回答")
-        self.copy = QPushButton("复制双语回答")
+        self.suggest = QPushButton("生成回答")
+        self.copy = QPushButton("复制回答")
         self.asr_status = QLabel("转写未连接")
         self.text_status = QLabel("文本 API 未连接")
         self.audio_status = QLabel("音频未打开")
@@ -85,55 +163,29 @@ class CloudPane(QWidget):
         self.history.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.history.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.history.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.original = QPlainTextEdit(readOnly=True, placeholderText="日语原文")
-        self.translated = QPlainTextEdit(readOnly=True, placeholderText="中文翻译")
-        self.answer_box = QPlainTextEdit(readOnly=True, placeholderText="AI 回答建议")
-        self.answer_status = QLabel()
-        self.answer_status.setWordWrap(True)
-        details = QSplitter(Qt.Orientation.Horizontal)
-        details.addWidget(self.original)
-        details.addWidget(self.translated)
-
-        layout = QVBoxLayout(self)
-        hint = QLabel("请选择授权的模拟或线上面试。系统回环包含同一播放设备上的其他声音。")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-        source = QHBoxLayout()
-        source.addWidget(self.source, 1)
-        source.addWidget(self.refresh)
-        layout.addLayout(source)
-        key_row = QHBoxLayout()
-        key_row.addWidget(QLabel("服务商"))
-        key_row.addWidget(self.provider)
-        key_row.addWidget(self.key, 1)
-        key_row.addWidget(self.vault_button)
-        layout.addLayout(key_row)
-        layout.addWidget(self.local_hint)
-        profile_row = QHBoxLayout()
-        profile_row.addWidget(self.profile)
-        profile_row.addWidget(self.revoke)
-        profile_row.addWidget(self.profile_status, 1)
-        layout.addLayout(profile_row)
-        layout.addWidget(self.consent)
-        layout.addWidget(self.auto_answer)
-        buttons = QHBoxLayout()
-        for button in (self.start, self.pause, self.stop, self.retry):
-            buttons.addWidget(button)
-        layout.addLayout(buttons)
-        layout.addWidget(self.asr_status)
-        layout.addWidget(self.text_status)
-        layout.addWidget(self.audio_status)
-        layout.addWidget(self.history, 3)
-        layout.addWidget(details, 2)
-        answer_actions = QHBoxLayout()
-        answer_actions.addWidget(self.suggest)
-        answer_actions.addWidget(self.copy)
-        layout.addLayout(answer_actions)
-        layout.addWidget(self.answer_status)
-        layout.addWidget(self.answer_box, 2)
+        self.original = CaptionLabel("等待日语语音…")
+        self.translated = CaptionLabel("等待中文译文…")
+        self.original_state = plain_label("", "captionState")
+        self.translation_state = plain_label("", "captionState")
+        self.answer_ja = plain_label("识别到面试问题后，可生成日语参考回答。", "answerText")
+        self.answer_zh = plain_label("", "answerTranslation")
+        for label in (self.answer_ja, self.answer_zh):
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.answer_status = plain_label("", "muted")
+        self.listening_badge = plain_label("", "listeningBadge")
+        self.listening_badge.setWordWrap(False)
+        self.input_summary = plain_label("", "muted")
+        self.status_detail = plain_label("", "muted")
+        self.settings_toggle = QPushButton("设置")
+        self.settings_toggle.setCheckable(True)
+        self.settings_toggle.setToolTip("设置音源、服务商与 API Key")
+        self.history_toggle = QPushButton("历史")
+        self.history_toggle.setCheckable(True)
+        self.start.setObjectName("primaryAction")
+        self.build_layout()
 
         self.render_timer = QTimer(self)
-        self.render_timer.setInterval(100)
+        self.render_timer.setInterval(65)
         self.render_timer.timeout.connect(self.render_history)
         self.render_timer.start()
         self.refresh.clicked.connect(self.refresh_devices)
@@ -150,8 +202,133 @@ class CloudPane(QWidget):
         self.profile.clicked.connect(self.open_profile)
         self.revoke.clicked.connect(self.revoke_profile)
         self.history.itemSelectionChanged.connect(self.select_row)
+        self.history.itemClicked.connect(self.show_captions)
+        self.settings_toggle.toggled.connect(self.toggle_settings)
+        self.history_toggle.toggled.connect(self.toggle_history)
         self.provider_changed()
         self.refresh_devices()
+
+    def build_layout(self):
+        self.setObjectName("captionPage")
+        self.setStyleSheet(CAPTION_STYLE)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 20, 24, 20)
+
+        live_card = QFrame()
+        live_card.setObjectName("liveCard")
+        outer.addWidget(live_card)
+        layout = QVBoxLayout(live_card)
+        layout.setContentsMargins(22, 18, 22, 16)
+        layout.setSpacing(13)
+        header = QHBoxLayout()
+        mark = plain_label("日", "brandMark")
+        mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mark.setFixedSize(30, 30)
+        header.addWidget(mark)
+        header.addWidget(plain_label("AI 日语面试助手", "appTitle"), 1)
+        header.addWidget(self.listening_badge)
+        layout.addLayout(header)
+
+        self.scroll = QScrollArea()
+        self.scroll.setObjectName("captionScroll")
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        layout.addWidget(self.scroll, 1)
+        content = QWidget()
+        content.setObjectName("captionContent")
+        self.scroll.setWidget(content)
+        page = QVBoxLayout(content)
+        page.setContentsMargins(0, 0, 0, 0)
+        page.setSpacing(13)
+
+        for title, caption, status in (
+            ("日语原文", self.original, self.original_state),
+            ("中文实时翻译", self.translated, self.translation_state),
+        ):
+            page.addWidget(self.rule())
+            heading = QHBoxLayout()
+            heading.addWidget(plain_label(title, "sectionTitle"), 1)
+            heading.addWidget(status)
+            page.addLayout(heading)
+            page.addWidget(caption)
+
+        answer_card = QFrame()
+        answer_card.setObjectName("answerCard")
+        answer_layout = QVBoxLayout(answer_card)
+        answer_layout.setContentsMargins(15, 12, 15, 12)
+        answer_layout.addWidget(plain_label("AI 推荐回答", "sectionTitle"))
+        answer_layout.addWidget(self.answer_ja)
+        answer_layout.addWidget(self.answer_zh)
+        answer_layout.addWidget(self.answer_status)
+        answer_actions = QHBoxLayout()
+        answer_actions.addStretch(1)
+        for button in (self.retry, self.suggest, self.copy):
+            answer_actions.addWidget(button)
+        answer_layout.addLayout(answer_actions)
+        page.addWidget(answer_card)
+
+        footer = QHBoxLayout()
+        footer.addWidget(self.input_summary, 1)
+        for button in (self.start, self.pause, self.stop, self.history_toggle, self.settings_toggle):
+            footer.addWidget(button)
+        layout.addLayout(footer)
+        layout.addWidget(self.status_detail)
+
+        self.settings = QFrame()
+        self.settings.setObjectName("setupCard")
+        settings = QVBoxLayout(self.settings)
+        settings.setContentsMargins(16, 14, 16, 14)
+        settings.addWidget(plain_label("音频与服务商", "sectionTitle"))
+        source = QHBoxLayout()
+        source.addWidget(self.source, 1)
+        source.addWidget(self.refresh)
+        settings.addLayout(source)
+        settings.addWidget(plain_label("系统音频会包含同一播放设备上的其他声音。", "muted"))
+        key_row = QHBoxLayout()
+        key_row.addWidget(QLabel("服务商"))
+        key_row.addWidget(self.provider)
+        key_row.addWidget(self.key, 1)
+        key_row.addWidget(self.vault_button)
+        settings.addLayout(key_row)
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(self.profile)
+        profile_row.addWidget(self.revoke)
+        profile_row.addWidget(self.profile_status, 1)
+        settings.addLayout(profile_row)
+        settings.addWidget(self.consent)
+        settings.addWidget(self.auto_answer)
+        page.addWidget(self.settings)
+        self.settings.hide()
+
+        self.history.setMinimumHeight(180)
+        page.addWidget(self.history)
+        self.history.hide()
+        page.addStretch(1)
+
+    @staticmethod
+    def rule():
+        line = QFrame()
+        line.setObjectName("captionRule")
+        line.setFixedHeight(1)
+        return line
+
+    def toggle_settings(self, visible):
+        self.settings.setVisible(visible)
+        if visible:
+            QTimer.singleShot(0, self.settings, lambda: self.scroll.ensureWidgetVisible(self.settings))
+        elif not self.history_toggle.isChecked():
+            self.show_captions()
+
+    def toggle_history(self, visible):
+        self.history.setVisible(visible)
+        self.dirty = True
+        if visible:
+            QTimer.singleShot(0, self.history, lambda: self.scroll.ensureWidgetVisible(self.history))
+        elif not self.settings_toggle.isChecked():
+            self.show_captions()
+
+    def show_captions(self):
+        self.scroll.verticalScrollBar().setValue(0)
 
     def source_changed(self):
         self.consent.setChecked(False)
@@ -195,7 +372,6 @@ class CloudPane(QWidget):
         self.auto_answer.setChecked(False)
         self.approved_facts = ()
         self.key.setPlaceholderText(f"{provider.label} API Key · 仅在本次运行使用")
-        self.local_hint.setVisible(provider is not OPENAI)
         self.consent.setText(
             "已取得必要同意，允许将所选来源的音频及转写发送至 OpenAI"
             if provider is OPENAI else
@@ -224,6 +400,34 @@ class CloudPane(QWidget):
         self.suggest.setEnabled(bool(self.can_send_row(key) and row and row.finalized and
                                      row.ja and row.answer_status != "正在检查问题…"))
         self.copy.setEnabled(bool(row and row.answer))
+        self.refresh_status()
+
+    def refresh_status(self):
+        audio = self.audio_status.text()
+        listening = self.state == "active" and audio == "音频 · 正在监听"
+        if listening:
+            badge, foreground, background = "● 正在监听", "#81e6aa", "#183429"
+        elif self.state == "active" and audio == "音频 · 当前没有输入帧":
+            badge, foreground, background = "等待声音", "#bdc2cd", "#24262d"
+        elif self.state == "active":
+            badge, foreground, background = "正在启动", "#f1ce8b", "#362d1d"
+        elif self.state == "paused":
+            badge, foreground, background = "已暂停", "#f1ce8b", "#362d1d"
+        else:
+            badge, foreground, background = "待开始", "#bdc2cd", "#24262d"
+        if self.listening_badge.text() != badge:
+            self.listening_badge.setText(badge)
+            self.listening_badge.setStyleSheet(
+                f"color: {foreground}; background: {background}; border-radius: 10px;"
+                " padding: 4px 10px; font-size: 12px; font-weight: 650;"
+            )
+        device = self.source.currentData()
+        if device is None:
+            source = "请选择音源"
+        else:
+            source = "系统音频" if device.loopback else "麦克风"
+        self.input_summary.setText(f"{source} · 日语 → 中文")
+        self.status_detail.setText("  ·  ".join((self.asr_status.text(), self.text_status.text(), audio)))
 
     def start_session(self):
         if not self.start.isEnabled():
@@ -232,6 +436,10 @@ class CloudPane(QWidget):
             self.session_id += 1
         self.generation += 1
         self.state = "active"
+        self.settings_toggle.setChecked(False)
+        self.show_captions()
+        self.asr_status.setText("正在启动转写")
+        self.audio_status.setText("正在等待音频设备")
         self.worker = LiveWorker(self.generation, self.source.currentData(), self.api_key(), self,
                                  session_id=self.session_id, auto_answer=self.auto_answer.isChecked(),
                                  facts=self.approved_facts, provider=self.selected_provider())
@@ -248,6 +456,7 @@ class CloudPane(QWidget):
         if self.state == "active":
             statuses = {"asr": self.asr_status, "text": self.text_status, "audio": self.audio_status}
             statuses[service].setText(value)
+            self.refresh_status()
 
     def pause_session(self):
         if self.worker is not None:
@@ -278,13 +487,15 @@ class CloudPane(QWidget):
             self.consent.setChecked(False)
             self.auto_answer.setChecked(False)
             self.approved_facts = ()
-            if self.audio_status.text().startswith(("正在打开", "音频 ·")):
+            if self.audio_status.text().startswith(("正在", "音频 ·")):
                 self.audio_status.setText("音频已停止")
         for row in self.rows.values():
             if not row.finalized and row.asr != "转写失败":
                 row.asr = "转写已中断"
             if row.translation == "翻译中":
                 row.translation = "翻译已取消"
+            if row.translation == "暂译中":
+                row.translation = "暂译"
             if row.answer_status == "正在检查问题…":
                 row.answer_status = "回答已取消"
         self.dirty = True
@@ -296,8 +507,19 @@ class CloudPane(QWidget):
         if self.state != "active":
             return
         row = self.rows.setdefault(key, Row())
+        if row.ja and not part.text.startswith(row.ja):
+            row.zh = ""
+            row.translation = "等待校正" if part.text else ""
         row.ja, row.finalized = part.text, part.final
-        row.asr = "转写失败" if part.failed else "日语定稿" if part.final else "转写中"
+        if part.failed:
+            row.asr = "转写失败"
+            row.translation = "暂译" if row.zh else ""
+        elif part.final:
+            row.asr = "日语定稿" if part.text else "未识别到有效语音"
+            if not part.text:
+                row.zh = row.translation = ""
+        else:
+            row.asr = "实时识别" if part.text else "转写中"
         if len(self.rows) > 500:
             del self.rows[next(iter(self.rows))]
         self.dirty = True
@@ -313,7 +535,9 @@ class CloudPane(QWidget):
         if self.state != "active" or key not in self.rows:
             return
         row = self.rows[key]
-        row.zh, row.translation = text, state
+        if state in {"已翻译", "暂译", "翻译失败"} or (text and not row.zh.startswith(text)):
+            row.zh = text
+        row.translation = state
         self.dirty = True
 
     @Slot(object, object, str, bool)
@@ -346,7 +570,7 @@ class CloudPane(QWidget):
     def copy_answer(self):
         _, row = self.current_row()
         if row and row.answer:
-            QApplication.clipboard().setText(self.answer_box.toPlainText())
+            QApplication.clipboard().setText(f"{row.answer.ja}\n\n{row.answer.zh}")
 
     def open_profile(self):
         dialog = ProfileDialog(self.approved_facts, self)
@@ -420,7 +644,7 @@ class CloudPane(QWidget):
                     self.history.setItem(index, column, QTableWidgetItem(value))
                 elif cell.text() != value:
                     cell.setText(value)
-        if at_end and following_latest and self.rendered:
+        if self.rendered and (not self.history_toggle.isChecked() or (at_end and following_latest)):
             self.history.selectRow(len(self.rendered) - 1)
         elif selected in self.rows:
             self.history.selectRow(self.rendered.index(selected))
@@ -432,15 +656,25 @@ class CloudPane(QWidget):
         self.select_row()
 
     def select_row(self):
-        _, row = self.current_row()
+        key, row = self.current_row()
+        animate = bool(self.can_send_row(key) and self.rendered and key == self.rendered[-1])
         for widget, value in ((self.original, row.ja if row else ""), (self.translated, row.zh if row else "")):
-            if widget.toPlainText() != value:
-                widget.setPlainText(value)
+            if key != self.displayed_row:
+                widget.set_caption("", animate=False)
+            widget.set_caption(value, animate=animate)
+        self.displayed_row = key
+        self.original_state.setText(row.asr if row else "")
+        translation = row.translation if row else ""
+        self.translation_state.setText(
+            {"暂译中": "暂译", "翻译中": "正在定稿", "已翻译": "已定稿"}.get(translation, translation)
+        )
         answer = row.answer if row else None
-        answer_text = f"{answer.ja}\n\n{answer.zh}" if answer else ""
-        if self.answer_box.toPlainText() != answer_text:
-            self.answer_box.setPlainText(answer_text)
-        self.answer_status.setText(row.answer_status if row else "")
+        self.answer_ja.setText(answer.ja if answer else "识别到面试问题后，可生成日语参考回答。")
+        self.answer_zh.setText(answer.zh if answer else "")
+        self.answer_zh.setVisible(bool(answer and answer.zh))
+        answer_status = row.answer_status if row else ""
+        self.answer_status.setText(answer_status)
+        self.answer_status.setVisible(bool(answer_status))
         self.controls()
 
     def shutdown(self):

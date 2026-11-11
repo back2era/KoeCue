@@ -14,8 +14,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.closing = False
-        self.setWindowTitle("AI Japanese Interview Assistant")
-        self.resize(980, 720)
+        self.setWindowTitle("AI 日语面试助手")
+        self.resize(920, 590)
         self.tabs = QTabWidget()
         self.diagnostic = DiagnosticPane(self)
         self.diagnostic.idle.connect(self.retry_close)
@@ -23,15 +23,16 @@ class MainWindow(QMainWindow):
         self.cloud = CloudPane(self)
         self.cloud.idle.connect(self.retry_close)
         self.cloud.idle.connect(self.sync_audio_controls)
-        self.tabs.addTab(self.diagnostic, "本地音频诊断")
         self.tabs.addTab(self.cloud, "实时面试辅助")
+        self.tabs.addTab(self.diagnostic, "音频诊断")
         self.tabs.currentChanged.connect(self.stop_other_session)
         self.setCentralWidget(self.tabs)
 
     def stop_other_session(self, index):
-        if index == 0 and self.cloud.state != "idle":
+        current = self.tabs.widget(index)
+        if current is self.diagnostic and self.cloud.state != "idle":
             self.cloud.stop_session()
-        elif index == 1 and self.diagnostic.state != "idle":
+        elif current is self.cloud and self.diagnostic.state != "idle":
             self.diagnostic.stop_capture()
         self.sync_audio_controls()
 
@@ -67,7 +68,7 @@ def configure_application(app):
     app.setFont(font)
     palette = QPalette()
     for role, color in {
-        QPalette.ColorRole.Window: "#161d29",
+        QPalette.ColorRole.Window: "#090a0c",
         QPalette.ColorRole.WindowText: "#ecf2ff",
         QPalette.ColorRole.Base: "#101622",
         QPalette.ColorRole.AlternateBase: "#1a2433",

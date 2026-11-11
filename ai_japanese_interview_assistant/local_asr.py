@@ -1,6 +1,7 @@
 """Optional local Japanese speech recognition using the multilingual Whisper base model."""
 import argparse
 import asyncio
+from collections import deque
 from contextlib import aclosing
 import os
 
@@ -10,6 +11,8 @@ from .profiles import app_directory
 MODEL_REPO = "Systran/faster-whisper-base"
 MODEL_REVISION = "a80717a3a48b1b28aa687bca146cb7301feae1b1"
 MODEL_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
+FIRST_PREVIEW_BYTES = 48000  # One second of 24 kHz mono PCM16.
+PREVIEW_STEP_BYTES = 57600
 
 
 class LocalAsrError(Exception):
@@ -50,8 +53,12 @@ def load_decoder():
 
 
 async def run_local_transcription(decode, frames, on_event, *, on_ending=lambda: None):
-    """Keep audio collection independent of CPU inference and bound queued turns."""
-    turns = asyncio.Queue(maxsize=2)
+    """Decode growing speech snapshots and prioritize final turns over previews."""
+    turns = deque()
+    ready = asyncio.Event()
+    preview = None
+    active_item = None
+    input_ended = False
     ending = False
 
     def end_session():
@@ -61,37 +68,67 @@ async def run_local_transcription(decode, frames, on_event, *, on_ending=lambda:
             on_ending()
 
     async def collect():
+        nonlocal active_item, preview, input_ended
         pending = bytearray()
+        sequence = 0
+        next_preview = FIRST_PREVIEW_BYTES
         async with aclosing(frames):
             try:
                 async for command in frames:
                     if command is not None:
+                        if active_item is None:
+                            sequence += 1
+                            active_item = f"local-{sequence}"
                         pending.extend(command)
+                        if len(pending) >= next_preview:
+                            preview = (active_item, bytes(pending))
+                            next_preview = len(pending) + PREVIEW_STEP_BYTES
+                            ready.set()
                     elif pending:
-                        try:
-                            turns.put_nowait(bytes(pending))
-                        except asyncio.QueueFull as exc:
-                            raise AudioError("本机语音识别跟不上采集速度，已停止监听。") from exc
+                        if len(turns) >= 2:
+                            raise AudioError("本机语音识别跟不上采集速度，已停止监听。")
+                        turns.append((active_item, bytes(pending)))
+                        active_item = preview = None
                         pending.clear()
+                        next_preview = FIRST_PREVIEW_BYTES
+                        ready.set()
             except BaseException:
                 end_session()
                 raise
-        await turns.put(None)
+        active_item = preview = None
+        input_ended = True
+        ready.set()
 
     async def recognize():
-        sequence = 0
+        nonlocal preview
         previous = None
-        while (pcm := await turns.get()) is not None:
+        shown_item = None
+        shown_text = ""
+        while not ending:
+            await ready.wait()
+            final = bool(turns)
+            if final:
+                item, pcm = turns.popleft()
+            elif preview is not None:
+                item, pcm = preview
+                preview = None
+            elif input_ended:
+                return
+            else:
+                ready.clear()
+                continue
             text = await asyncio.to_thread(decode, pcm)
             if ending:
                 return
-            if not text:
+            if not final:
+                if item == active_item and text and (item, text) != (shown_item, shown_text):
+                    shown_item, shown_text = item, text
+                    on_event({"type": "conversation.item.input_audio_transcription.revised", "item_id": item, "transcript": text})
                 continue
-            sequence += 1
-            item = f"local-{sequence}"
-            on_event({"type": "input_audio_buffer.committed", "item_id": item, "previous_item_id": previous})
-            on_event({"type": "conversation.item.input_audio_transcription.completed", "item_id": item, "transcript": text})
-            previous = item
+            if text or shown_item == item:
+                on_event({"type": "input_audio_buffer.committed", "item_id": item, "previous_item_id": previous})
+                on_event({"type": "conversation.item.input_audio_transcription.completed", "item_id": item, "transcript": text})
+                previous = item
 
     tasks = (asyncio.create_task(collect()), asyncio.create_task(recognize()))
     try:

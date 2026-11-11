@@ -20,6 +20,41 @@ def test_local_decoder_publishes_only_committed_segments():
     assert [part.text for part in book.parts if part.final] == list(expected.values())
 
 
+def test_local_subtitle_revises_the_same_row_before_finalizing():
+    async def exercise():
+        preview = asyncio.Event()
+        second_preview = asyncio.Event()
+        book = TranscriptBook()
+        revisions = []
+
+        def receive(event):
+            part = book.apply(event)
+            if event["type"].endswith(".revised"):
+                revisions.append((part.item_id, part.text, part.final))
+                (preview if len(revisions) == 1 else second_preview).set()
+            elif event["type"].endswith(".completed"):
+                revisions.append((part.item_id, part.text, part.final))
+
+        async def frames():
+            yield bytes(48000)
+            await preview.wait()
+            yield bytes(60000)
+            await second_preview.wait()
+            yield None
+
+        results = iter(("日本に住む", "日本で働く", "日本で働きたいです。"))
+        await asyncio.wait_for(
+            run_local_transcription(lambda pcm: next(results), frames(), receive), 3,
+        )
+        assert revisions == [
+            ("local-1", "日本に住む", False),
+            ("local-1", "日本で働く", False),
+            ("local-1", "日本で働きたいです。", True),
+        ]
+
+    asyncio.run(exercise())
+
+
 def test_cancellation_disposes_frames_and_suppresses_late_decode():
     async def exercise():
         started = asyncio.Event()

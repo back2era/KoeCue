@@ -55,6 +55,8 @@ class TranscriptBook:
         match kind.rsplit(".", 1)[-1]:
             case "delta":
                 part = replace(part, text=part.text + event.get("delta", ""))
+            case "revised":
+                part = replace(part, text=event.get("transcript", "").strip())
             case "completed":
                 part = replace(part, text=event.get("transcript", "").strip(), final=True)
             case "failed":
