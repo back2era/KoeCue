@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 from .cloud_gui import CloudPane
 from .diagnostic import DiagnosticPane
 from .glass import DEFAULT_THEME, BrandMark, GlassCanvas, GlassStyle, PageFade, apply_theme, glass_panel, plain_label
+from .personal_gui import PersonalPane
 
 
 class MainWindow(QMainWindow):
@@ -34,7 +35,7 @@ class MainWindow(QMainWindow):
         nav_layout.setContentsMargins(4, 4, 4, 4)
         nav_layout.setSpacing(3)
         self.navigation = QButtonGroup(self)
-        for index, title in enumerate(("实时面试", "音频诊断")):
+        for index, title in enumerate(("实时面试", "音频诊断", "个人信息")):
             button = QPushButton(title)
             button.setProperty("nav", True)
             button.setCheckable(True)
@@ -50,8 +51,15 @@ class MainWindow(QMainWindow):
         self.cloud.theme_changed.connect(lambda theme_id: apply_theme(QApplication.instance(), theme_id))
         self.cloud.idle.connect(self.retry_close)
         self.cloud.idle.connect(self.sync_audio_controls)
+        self.personal = PersonalPane(self.cloud.auto_answer, self.cloud.open_profile, self)
+        self.personal.idle.connect(self.retry_close)
+        self.personal.authorized.connect(self.cloud.set_approved_personal)
+        self.personal.revoked.connect(self.cloud.revoke_profile)
+        self.cloud.profile_changed.connect(self.personal.session_state)
+        self.personal.session_state(*self.cloud.profile_snapshot)
         self.tabs.addWidget(self.cloud)
         self.tabs.addWidget(self.diagnostic)
+        self.tabs.addWidget(self.personal)
         self.navigation.button(0).setChecked(True)
         self.navigation.idClicked.connect(self.tabs.setCurrentIndex)
         for key, step in ((QKeySequence.StandardKey.NextChild, 1), (QKeySequence.StandardKey.PreviousChild, -1)):
@@ -68,11 +76,11 @@ class MainWindow(QMainWindow):
     def change_page(self, index):
         self.navigation.button(index).setChecked(True)
         current = self.tabs.widget(index)
-        if current is self.diagnostic:
+        if current is not self.cloud:
             self.cloud.settings_toggle.setChecked(False)
-            if self.cloud.state != "idle":
-                self.cloud.stop_session()
-        elif current is self.cloud and self.diagnostic.state != "idle":
+        if current is self.diagnostic and self.cloud.state != "idle":
+            self.cloud.stop_session()
+        if current is not self.diagnostic and self.diagnostic.state != "idle":
             self.diagnostic.stop_capture()
         self.sync_audio_controls()
         self.fade.play()
@@ -91,7 +99,8 @@ class MainWindow(QMainWindow):
         self.closing = True
         diagnostic_idle = self.diagnostic.shutdown()
         cloud_idle = self.cloud.shutdown()
-        if diagnostic_idle and cloud_idle:
+        personal_idle = self.personal.shutdown()
+        if diagnostic_idle and cloud_idle and personal_idle:
             event.accept()
         else:
             event.ignore()

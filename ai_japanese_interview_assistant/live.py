@@ -9,6 +9,7 @@ from .audio import AudioBuffer, AudioError, capture, check_topology
 from .config import OPENAI
 from .interview import InterviewService
 from .local_asr import LocalAsrError, load_decoder, run_local_transcription
+from .personal import PersonalInfo
 from .services import TextService, client_for, error_message
 from .telemetry import Event as LogEvent, record
 from .transcription import AudioProcessor, RealtimeError, TranscriptBook, run_transcription
@@ -21,7 +22,8 @@ class LiveWorker(QThread):
     translation = Signal(object, str, str)
     answer = Signal(object, object, str, bool)
 
-    def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False, facts=(), provider=OPENAI):
+    def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False,
+                 facts=(), personal_info=PersonalInfo(), provider=OPENAI):
         super().__init__(parent)
         self.generation = generation
         self.session_id = session_id
@@ -30,6 +32,7 @@ class LiveWorker(QThread):
         self.provider = provider
         self.auto_answer = auto_answer
         self.facts = facts
+        self.personal_info = personal_info
         self.sharing_revoked = Event()
         self.buffer = AudioBuffer()
         self.book = TranscriptBook()
@@ -39,15 +42,20 @@ class LiveWorker(QThread):
 
     def stop(self):
         self.requestInterruption()
+        self._clear_profile()
         self.buffer.close()
         self.dispatch(self._cancel)
 
     def revoke_profile(self):
-        self.sharing_revoked.set()
+        self._clear_profile()
         self.dispatch(self._revoke_profile)
 
-    def _revoke_profile(self):
+    def _clear_profile(self):
+        self.sharing_revoked.set()
         self.facts = ()
+        self.personal_info = PersonalInfo()
+
+    def _revoke_profile(self):
         for (kind, _), task in self.jobs.items():
             if kind == "answer":
                 task.cancel()
@@ -84,7 +92,7 @@ class LiveWorker(QThread):
         finally:
             self.buffer.close()
             self.key = ""
-            self.facts = ()
+            self._clear_profile()
             self.loop = None
 
     async def _main(self):
@@ -125,6 +133,7 @@ class LiveWorker(QThread):
 
     def stop_text_and_audio(self):
         self.requestInterruption()
+        self._clear_profile()
         self.buffer.close()
         for task in self.jobs.values():
             task.cancel()
@@ -225,21 +234,28 @@ class LiveWorker(QThread):
         self.start_job(("answer", row_id), self.suggest, row_id, text, automatic)
 
     async def suggest(self, row_id, text, automatic):
-        facts = () if self.sharing_revoked.is_set() else self.facts
+        facts, personal_info = self.facts, self.personal_info
+        if self.sharing_revoked.is_set():
+            facts, personal_info = (), PersonalInfo()
+        scoped = bool(facts or personal_info)
         started = monotonic()
 
         def allowed():
-            return not self.isInterruptionRequested() and (not facts or not self.sharing_revoked.is_set())
+            return not self.isInterruptionRequested() and (not scoped or not self.sharing_revoked.is_set())
 
-        self.answer.emit(row_id, None, "正在检查问题…", bool(facts))
+        self.answer.emit(row_id, None, "正在检查问题…", scoped)
         try:
-            answer = await self.interview.suggest(text, automatic=automatic, facts=facts, allowed=allowed)
+            answer = await self.interview.suggest(
+                text, automatic=automatic, facts=facts, personal_info=personal_info, allowed=allowed,
+            )
+            if not allowed():
+                raise asyncio.CancelledError
         except asyncio.CancelledError:
-            self.answer.emit(row_id, None, "回答已取消", bool(facts))
+            self.answer.emit(row_id, None, "回答已取消", scoped)
             raise
         except Exception as exc:
-            self.answer.emit(row_id, None, error_message(exc), bool(facts))
+            self.answer.emit(row_id, None, error_message(exc), scoped)
         else:
             if answer:
                 record(LogEvent.ANSWER_READY, monotonic() - started)
-            self.answer.emit(row_id, answer, "回答已生成" if answer else "无需自动回答", bool(facts))
+            self.answer.emit(row_id, answer, "回答已生成" if answer else "无需自动回答", scoped)

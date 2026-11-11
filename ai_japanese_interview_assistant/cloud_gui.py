@@ -15,6 +15,7 @@ from .credentials import credential
 from .glass import DEFAULT_THEME, THEMES, GlassComboBox, GlassDialog, glass_panel, plain_label
 from .interview import Answer
 from .live import LiveWorker
+from .personal import PersonalInfo
 from .profile_gui import PrivateIO, ProfileDialog
 from .settings import Preferences, load_preferences, save_preferences
 
@@ -73,6 +74,7 @@ class Row:
 class CloudPane(QWidget):
     idle = Signal()
     theme_changed = Signal(str)
+    profile_changed = Signal(bool, object, int, str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -86,6 +88,8 @@ class CloudPane(QWidget):
         self.vault_operation = ""
         self.vault_provider = None
         self.approved_facts = ()
+        self.approved_personal = PersonalInfo()
+        self.profile_snapshot = None
         self.generation = 0
         self.session_id = 0
         self.capture_available = True
@@ -120,9 +124,6 @@ class CloudPane(QWidget):
         for action, operation in (("读取已保存的 Key", "read"), ("保存当前 Key", "save"), ("删除已保存的 Key", "delete")):
             vault_menu.addAction(action, lambda checked=False, op=operation: self.use_vault(op))
         self.vault_button.setMenu(vault_menu)
-        self.profile = QPushButton("编辑资料 / 本次授权")
-        self.revoke = QPushButton("撤销资料分享")
-        self.profile_status = plain_label("本次未授权资料分享", "muted")
         self.consent = QCheckBox()
         self.auto_answer = QCheckBox("自动识别问题并生成回答")
         self.auto_answer.setChecked(True)
@@ -193,8 +194,6 @@ class CloudPane(QWidget):
         self.retry.clicked.connect(self.retry_translation)
         self.suggest.clicked.connect(self.request_answer)
         self.copy.clicked.connect(self.copy_answer)
-        self.profile.clicked.connect(self.open_profile)
-        self.revoke.clicked.connect(self.revoke_profile)
         self.history.itemSelectionChanged.connect(self.select_row)
         self.history.itemClicked.connect(self.show_captions)
         self.settings_toggle.toggled.connect(self.toggle_settings)
@@ -293,7 +292,7 @@ class CloudPane(QWidget):
 
     def build_settings(self):
         self.settings = GlassDialog("设置", self)
-        self.settings.resize(640, 500)
+        self.settings.resize(640, 412)
         appearance = glass_panel()
         appearance_row = QHBoxLayout(appearance)
         appearance_row.setContentsMargins(16, 12, 16, 12)
@@ -319,18 +318,6 @@ class CloudPane(QWidget):
         settings.addLayout(key_row)
         self.settings.body.addWidget(card)
 
-        card = glass_panel()
-        settings = QVBoxLayout(card)
-        settings.setContentsMargins(16, 14, 16, 14)
-        settings.setSpacing(8)
-        settings.addWidget(plain_label("面试辅助", "sectionTitle"))
-        settings.addWidget(self.auto_answer)
-        profile_row = QHBoxLayout()
-        profile_row.addWidget(self.profile)
-        profile_row.addWidget(self.revoke)
-        profile_row.addWidget(self.profile_status, 1)
-        settings.addLayout(profile_row)
-        self.settings.body.addWidget(card)
         self.settings.body.addWidget(self.consent)
         self.settings.body.addStretch()
         done = QPushButton("完成")
@@ -443,6 +430,7 @@ class CloudPane(QWidget):
         self.key.clear()
         self.consent.setChecked(False)
         self.approved_facts = ()
+        self.approved_personal = PersonalInfo()
         self.key.setPlaceholderText(f"{provider.label} API Key")
         self.consent.setText(
             "已取得必要同意，允许将所选来源的音频及转写发送至 OpenAI"
@@ -460,10 +448,14 @@ class CloudPane(QWidget):
                 and self.settings_worker is None and not self.closing)
         configurable = idle and self.state != "paused"
         self.theme.setEnabled(self.preferences_ready and not self.closing)
-        for widget in (self.source, self.refresh, self.provider, self.key, self.vault_button, self.consent, self.auto_answer, self.profile):
+        for widget in (self.source, self.refresh, self.provider, self.key, self.vault_button, self.consent, self.auto_answer):
             widget.setEnabled(configurable)
-        self.revoke.setEnabled(bool(self.approved_facts))
-        self.profile_status.setText(f"本次授权 {len(self.approved_facts)} 条资料" if self.approved_facts else "本次未授权资料分享")
+        profile_state = (
+            configurable, self.approved_personal, len(self.approved_facts), self.selected_provider().label, self.state,
+        )
+        if profile_state != self.profile_snapshot:
+            self.profile_snapshot = profile_state
+            self.profile_changed.emit(*profile_state)
         allowed = bool(self.consent.isChecked() and self.source.currentData() and self.api_key())
         self.start.setEnabled(idle and allowed and self.capture_available)
         mode = "云端监听" if self.selected_provider() is OPENAI else "本地转写"
@@ -519,7 +511,8 @@ class CloudPane(QWidget):
         self.audio_status.setText("正在等待音频设备")
         self.worker = LiveWorker(self.generation, self.source.currentData(), self.api_key(), self,
                                  session_id=self.session_id, auto_answer=self.auto_answer.isChecked(),
-                                 facts=self.approved_facts, provider=self.selected_provider())
+                                 facts=self.approved_facts, personal_info=self.approved_personal,
+                                 provider=self.selected_provider())
         self.worker.status.connect(self.set_status)
         self.worker.transcript.connect(self.add_transcript)
         self.worker.order.connect(self.set_order)
@@ -550,6 +543,7 @@ class CloudPane(QWidget):
             self.worker.stop()
         self.consent.setChecked(False)
         self.approved_facts = ()
+        self.approved_personal = PersonalInfo()
         self.asr_status.setText("已停止")
         self.text_status.setText("文本 API 未连接")
         self.audio_status.setText("音频未打开")
@@ -562,6 +556,7 @@ class CloudPane(QWidget):
             self.state = "idle"
             self.consent.setChecked(False)
             self.approved_facts = ()
+            self.approved_personal = PersonalInfo()
             if self.audio_status.text().startswith(("正在", "音频 ·")):
                 self.audio_status.setText("音频已停止")
         for key, row in self.rows.items():
@@ -604,7 +599,8 @@ class CloudPane(QWidget):
 
     @Slot(object, object, str, bool)
     def add_answer(self, key, answer, state, scoped):
-        if self.can_send_row(key) and key in self.rows and (not scoped or self.approved_facts):
+        shared = self.approved_facts or self.approved_personal
+        if self.can_send_row(key) and key in self.rows and (not scoped or shared):
             row = self.rows[key]
             row.answer, row.answer_status = answer, state
             self.mark_changed(key)
@@ -635,7 +631,7 @@ class CloudPane(QWidget):
             QApplication.clipboard().setText(f"{row.answer.ja}\n\n{row.answer.zh}")
 
     def open_profile(self):
-        dialog = ProfileDialog(self.approved_facts, self)
+        dialog = ProfileDialog(self.approved_facts, self.window())
         dialog.authorized.connect(self.set_approved)
         dialog.changed.connect(lambda facts: self.revoke_profile())
         dialog.exec()
@@ -645,7 +641,14 @@ class CloudPane(QWidget):
         self.approved_facts = facts
         self.controls()
 
+    @Slot(object)
+    def set_approved_personal(self, info):
+        if self.state == "idle":
+            self.approved_personal = info
+            self.controls()
+
     def revoke_profile(self):
+        self.approved_personal = PersonalInfo()
         self.set_approved(())
         if self.worker is not None:
             self.worker.revoke_profile()

@@ -139,6 +139,8 @@ def test_glass_layout_keeps_history_visible_and_settings_in_sync():
         window.activateWindow()
         app.processEvents()
         QTest.keyClick(window, Qt.Key.Key_Tab, Qt.KeyboardModifier.ControlModifier)
+        assert window.tabs.currentWidget() is window.personal
+        QTest.keyClick(window, Qt.Key.Key_Tab, Qt.KeyboardModifier.ControlModifier)
         assert window.tabs.currentWidget() is cloud
     finally:
         window.close()

@@ -14,6 +14,7 @@ __pycache__/
 *credentials*.json
 *secret*.json
 *profile*.json
+personal.json
 *resume*
 *简历*
 private/
