@@ -5,7 +5,7 @@ import os
 from PySide6.QtCore import QTimer, Signal, Slot, Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFrame, QHeaderView, QHBoxLayout, QLabel, QLineEdit, QMenu,
-    QPushButton, QScrollArea, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .diagnostic import DeviceScan
@@ -39,7 +39,9 @@ QPushButton#primaryAction { background: #b4f1ce; color: #13251b; border-color: #
 QPushButton#primaryAction:hover { background: #caf8dd; }
 QPushButton:disabled, QPushButton#primaryAction:disabled { background: #1a1c21; color: #777c87; border-color: #2a2d34; }
 QTableWidget { background: #111317; color: #eef0f4; gridline-color: #26282f; border: 1px solid #292b32; }
+QTableWidget::item:selected { background: #203b30; color: #e5f6ed; }
 QHeaderView::section { background: #202228; color: #cbd0d9; padding: 5px; border: none; }
+QSplitter::handle { background: #26282e; }
 """
 
 
@@ -61,19 +63,15 @@ class CaptionLabel(QLabel):
     def set_caption(self, text, *, animate):
         if animate and text == self.target:
             return
-        self.target = text
-        if not animate or not text:
+        if not animate or not text.startswith(self.target):
+            self.target = text
             self.shown = text
             self.timer.stop()
             self.setText(text or self.placeholder)
             return
-        prefix = 0
-        for old, new in zip(self.shown, text):
-            if old != new:
-                break
-            prefix += 1
-        self.shown = text[:prefix]
-        self.setText(self.shown)
+        self.target = text
+        if not self.shown and not self.timer.isActive():
+            self.setText("")
         remaining = len(self.target) - len(self.shown)
         if remaining:
             self.timer.start(max(5, min(28, 420 // remaining)))
@@ -124,6 +122,7 @@ class CloudPane(QWidget):
         self.closing = False
         self.rows = {}
         self.rendered = []
+        self.changed_rows = set()
         self.displayed_row = None
         self.dirty = False
 
@@ -160,6 +159,10 @@ class CloudPane(QWidget):
         self.history = QTableWidget(0, 3)
         self.history.setHorizontalHeaderLabels(["日语原文", "简体中文", "状态"])
         self.history.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.history.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.history.setColumnWidth(2, 142)
+        self.history.verticalHeader().setDefaultSectionSize(44)
+        self.history.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerItem)
         self.history.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.history.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.history.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -179,8 +182,7 @@ class CloudPane(QWidget):
         self.settings_toggle = QPushButton("设置")
         self.settings_toggle.setCheckable(True)
         self.settings_toggle.setToolTip("设置音源、服务商与 API Key")
-        self.history_toggle = QPushButton("历史")
-        self.history_toggle.setCheckable(True)
+        self.latest = QPushButton("回到最新")
         self.start.setObjectName("primaryAction")
         self.build_layout()
 
@@ -204,12 +206,13 @@ class CloudPane(QWidget):
         self.history.itemSelectionChanged.connect(self.select_row)
         self.history.itemClicked.connect(self.show_captions)
         self.settings_toggle.toggled.connect(self.toggle_settings)
-        self.history_toggle.toggled.connect(self.toggle_history)
+        self.latest.clicked.connect(self.select_latest)
         self.provider_changed()
         self.refresh_devices()
 
     def build_layout(self):
         self.setObjectName("captionPage")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         self.setStyleSheet(CAPTION_STYLE)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 20, 24, 20)
@@ -229,11 +232,15 @@ class CloudPane(QWidget):
         header.addWidget(self.listening_badge)
         layout.addLayout(header)
 
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+        layout.addWidget(splitter, 1)
         self.scroll = QScrollArea()
         self.scroll.setObjectName("captionScroll")
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        layout.addWidget(self.scroll, 1)
+        self.scroll.setMinimumHeight(130)
+        splitter.addWidget(self.scroll)
         content = QWidget()
         content.setObjectName("captionContent")
         self.scroll.setWidget(content)
@@ -269,7 +276,7 @@ class CloudPane(QWidget):
 
         footer = QHBoxLayout()
         footer.addWidget(self.input_summary, 1)
-        for button in (self.start, self.pause, self.stop, self.history_toggle, self.settings_toggle):
+        for button in (self.start, self.pause, self.stop, self.settings_toggle):
             footer.addWidget(button)
         layout.addLayout(footer)
         layout.addWidget(self.status_detail)
@@ -300,10 +307,19 @@ class CloudPane(QWidget):
         page.addWidget(self.settings)
         self.settings.hide()
 
-        self.history.setMinimumHeight(180)
-        page.addWidget(self.history)
-        self.history.hide()
         page.addStretch(1)
+
+        history_pane = QWidget()
+        history_layout = QVBoxLayout(history_pane)
+        history_layout.setContentsMargins(0, 8, 0, 0)
+        history_heading = QHBoxLayout()
+        history_heading.addWidget(plain_label("历史对话", "sectionTitle"), 1)
+        history_heading.addWidget(self.latest)
+        history_layout.addLayout(history_heading)
+        self.history.setMinimumHeight(128)
+        history_layout.addWidget(self.history, 1)
+        splitter.addWidget(history_pane)
+        splitter.setSizes([300, 195])
 
     @staticmethod
     def rule():
@@ -316,15 +332,7 @@ class CloudPane(QWidget):
         self.settings.setVisible(visible)
         if visible:
             QTimer.singleShot(0, self.settings, lambda: self.scroll.ensureWidgetVisible(self.settings))
-        elif not self.history_toggle.isChecked():
-            self.show_captions()
-
-    def toggle_history(self, visible):
-        self.history.setVisible(visible)
-        self.dirty = True
-        if visible:
-            QTimer.singleShot(0, self.history, lambda: self.scroll.ensureWidgetVisible(self.history))
-        elif not self.settings_toggle.isChecked():
+        else:
             self.show_captions()
 
     def show_captions(self):
@@ -400,6 +408,7 @@ class CloudPane(QWidget):
         self.suggest.setEnabled(bool(self.can_send_row(key) and row and row.finalized and
                                      row.ja and row.answer_status != "正在检查问题…"))
         self.copy.setEnabled(bool(row and row.answer))
+        self.latest.setEnabled(bool(self.rendered))
         self.refresh_status()
 
     def refresh_status(self):
@@ -489,45 +498,34 @@ class CloudPane(QWidget):
             self.approved_facts = ()
             if self.audio_status.text().startswith(("正在", "音频 ·")):
                 self.audio_status.setText("音频已停止")
-        for row in self.rows.values():
-            if not row.finalized and row.asr != "转写失败":
-                row.asr = "转写已中断"
+        for key, row in self.rows.items():
             if row.translation == "翻译中":
                 row.translation = "翻译已取消"
-            if row.translation == "暂译中":
-                row.translation = "暂译"
+                self.mark_changed(key)
             if row.answer_status == "正在检查问题…":
                 row.answer_status = "回答已取消"
-        self.dirty = True
+                self.mark_changed(key)
         self.controls()
         self.idle.emit()
 
     def add_transcript(self, data):
         key, part = data
-        if self.state != "active":
+        if self.state != "active" or key in self.rows or not (part.final or part.failed):
             return
-        row = self.rows.setdefault(key, Row())
-        if row.ja and not part.text.startswith(row.ja):
-            row.zh = ""
-            row.translation = "等待校正" if part.text else ""
-        row.ja, row.finalized = part.text, part.final
         if part.failed:
-            row.asr = "转写失败"
-            row.translation = "暂译" if row.zh else ""
-        elif part.final:
-            row.asr = "日语定稿" if part.text else "未识别到有效语音"
-            if not part.text:
-                row.zh = row.translation = ""
+            self.rows[key] = Row(asr="转写失败")
+        elif part.text:
+            self.rows[key] = Row(ja=part.text, finalized=True, asr="日语定稿")
         else:
-            row.asr = "实时识别" if part.text else "转写中"
-        if len(self.rows) > 500:
-            del self.rows[next(iter(self.rows))]
-        self.dirty = True
+            return
+        self.mark_changed(key)
 
     def set_order(self, order):
         if self.state != "active":
             return
         current = {key: self.rows[key] for key in order if key in self.rows}
+        if not current:
+            return
         self.rows = {key: row for key, row in self.rows.items() if key not in current} | current
         self.dirty = True
 
@@ -535,17 +533,15 @@ class CloudPane(QWidget):
         if self.state != "active" or key not in self.rows:
             return
         row = self.rows[key]
-        if state in {"已翻译", "暂译", "翻译失败"} or (text and not row.zh.startswith(text)):
-            row.zh = text
-        row.translation = state
-        self.dirty = True
+        row.zh, row.translation = text, state
+        self.mark_changed(key)
 
     @Slot(object, object, str, bool)
     def add_answer(self, key, answer, state, scoped):
         if self.can_send_row(key) and key in self.rows and (not scoped or self.approved_facts):
             row = self.rows[key]
             row.answer, row.answer_status = answer, state
-            self.dirty = True
+            self.mark_changed(key)
 
     def current_row(self):
         index = self.history.currentRow()
@@ -587,10 +583,10 @@ class CloudPane(QWidget):
         self.set_approved(())
         if self.worker is not None:
             self.worker.revoke_profile()
-            for row in self.rows.values():
+            for key, row in self.rows.items():
                 if row.answer_status == "正在检查问题…":
                     row.answer_status = "回答已取消"
-            self.dirty = True
+                    self.mark_changed(key)
 
     def use_vault(self, operation):
         if self.credential_worker is not None:
@@ -625,18 +621,35 @@ class CloudPane(QWidget):
         self.controls()
         self.idle.emit()
 
+    def mark_changed(self, key):
+        self.changed_rows.add(key)
+        self.dirty = True
+
+    def select_latest(self):
+        if self.rendered:
+            self.history.selectRow(len(self.rendered) - 1)
+            self.history.scrollToBottom()
+            self.show_captions()
+
     def render_history(self):
         if not self.dirty:
             return
         self.dirty = False
+        changed, self.changed_rows = self.changed_rows, set()
         selected, _ = self.current_row()
-        following_latest = not self.rendered or selected == self.rendered[-1]
+        previous = self.rendered
         scroll = self.history.verticalScrollBar()
-        at_end = scroll.value() == scroll.maximum()
+        position = scroll.value()
+        top_row = previous[position] if position < len(previous) else None
+        following_latest = not previous or (position == scroll.maximum() and selected == previous[-1])
         self.history.blockSignals(True)
         self.rendered = list(self.rows)
-        self.history.setRowCount(len(self.rendered))
-        for index, row in enumerate(self.rows.values()):
+        positions = {key: index for index, key in enumerate(self.rendered)}
+        if len(previous) != len(self.rendered):
+            self.history.setRowCount(len(self.rendered))
+        for index, (key, row) in enumerate(self.rows.items()):
+            if key not in changed and index < len(previous) and previous[index] == key:
+                continue
             statuses = " · ".join(filter(None, (row.asr, row.translation, row.answer_status)))
             for column, value in enumerate((row.ja, row.zh, statuses)):
                 cell = self.history.item(index, column)
@@ -644,16 +657,16 @@ class CloudPane(QWidget):
                     self.history.setItem(index, column, QTableWidgetItem(value))
                 elif cell.text() != value:
                     cell.setText(value)
-        if self.rendered and (not self.history_toggle.isChecked() or (at_end and following_latest)):
-            self.history.selectRow(len(self.rendered) - 1)
-        elif selected in self.rows:
-            self.history.selectRow(self.rendered.index(selected))
-        elif self.rendered:
-            self.history.selectRow(len(self.rendered) - 1)
-        if at_end:
+        target = self.rendered[-1] if self.rendered and (following_latest or selected not in positions) else selected
+        if target in positions and self.history.currentRow() != positions[target]:
+            self.history.selectRow(positions[target])
+        if following_latest:
             self.history.scrollToBottom()
+        else:
+            scroll.setValue(positions.get(top_row, position))
         self.history.blockSignals(False)
-        self.select_row()
+        if target != selected or target in changed:
+            self.select_row()
 
     def select_row(self):
         key, row = self.current_row()
@@ -665,9 +678,7 @@ class CloudPane(QWidget):
         self.displayed_row = key
         self.original_state.setText(row.asr if row else "")
         translation = row.translation if row else ""
-        self.translation_state.setText(
-            {"暂译中": "暂译", "翻译中": "正在定稿", "已翻译": "已定稿"}.get(translation, translation)
-        )
+        self.translation_state.setText(translation)
         answer = row.answer if row else None
         self.answer_ja.setText(answer.ja if answer else "识别到面试问题后，可生成日语参考回答。")
         self.answer_zh.setText(answer.zh if answer else "")

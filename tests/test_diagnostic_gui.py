@@ -17,7 +17,8 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
     try:
         assert window.tabs.currentWidget() is window.cloud
         assert window.cloud.settings.isHidden()
-        assert window.cloud.history.isHidden()
+        assert window.cloud.history.isVisible()
+        assert not window.cloud.scroll.isAncestorOf(window.cloud.history)
         assert not window.cloud.scroll.isAncestorOf(window.cloud.stop)
         pane = window.diagnostic
         deadline = monotonic() + 5
@@ -54,18 +55,6 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
         cloud.render_history()
         assert not cloud.retry.isEnabled()
         assert not cloud.suggest.isEnabled()
-        row_id = (2, 1, "current")
-        cloud.rows[row_id] = Row(ja="日本で働く", zh="我想在东京工作", translation="暂译")
-        cloud.add_translation(row_id, "我想在", "暂译中")
-        assert cloud.rows[row_id].zh == "我想在东京工作"
-        cloud.add_translation(row_id, "我想在日", "暂译中")
-        assert cloud.rows[row_id].zh == "我想在日"
-        from ai_japanese_interview_assistant.transcription import TranscriptPart
-
-        cloud.add_transcript((row_id, TranscriptPart("current", "東京で働く", final=True)))
-        cloud.add_translation(row_id, "", "翻译失败")
-        assert cloud.rows[row_id].zh == ""
-        assert cloud.rows[row_id].translation == "翻译失败"
     finally:
         window.close()
         app.processEvents()
@@ -124,14 +113,14 @@ def test_deepseek_worker_sends_only_local_transcript_to_text_api(monkeypatch):
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
-def test_caption_reveals_characters_and_removes_the_wrong_suffix(monkeypatch):
+def test_caption_reveals_new_characters_one_at_a_time(monkeypatch):
     from PySide6.QtWidgets import QApplication
     from ai_japanese_interview_assistant.cloud_gui import CaptionLabel
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     caption = CaptionLabel("等待译文")
-    caption.set_caption("我想在东京工作", animate=False)
+    caption.set_caption("我想在", animate=False)
     caption.set_caption("我想在日本工作", animate=True)
     assert caption.text() == "我想在"
     caption.reveal_next()
@@ -147,39 +136,22 @@ def test_caption_reveals_characters_and_removes_the_wrong_suffix(monkeypatch):
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
-def test_chinese_preview_is_replaced_when_japanese_is_corrected(monkeypatch):
+def test_worker_shows_and_translates_only_the_final_japanese_segment(monkeypatch):
     import asyncio
 
     from ai_japanese_interview_assistant import live
 
     async def exercise():
-        started = asyncio.Event()
-        revised = asyncio.Event()
         translated = asyncio.Event()
-        cancelled = asyncio.Event()
-        stale_release = asyncio.Event()
+        transcripts = []
         output = []
         requests = []
 
         class Service:
-            async def translate(self, text, *, preview=False):
-                requests.append((text, preview))
-                if preview:
-                    if text == "日本に住む":
-                        try:
-                            yield "住在"
-                            started.set()
-                            await stale_release.wait()
-                            yield "东京"
-                            await asyncio.Future()
-                        finally:
-                            cancelled.set()
-                    else:
-                        yield "在日本"
-                        revised.set()
-                else:
-                    yield "在"
-                    yield "日本工作"
+            async def translate(self, text):
+                requests.append(text)
+                yield "在"
+                yield "日本工作"
 
         def receive(row_id, text, state):
             output.append((row_id, text, state))
@@ -190,22 +162,70 @@ def test_chinese_preview_is_replaced_when_japanese_is_corrected(monkeypatch):
         worker = live.LiveWorker(1, None, "test")
         worker.service = Service()
         worker.translation.connect(receive)
+        worker.transcript.connect(transcripts.append)
         worker.on_event({"type": "conversation.item.input_audio_transcription.delta", "item_id": "a", "delta": "日本に"})
-        worker.on_event({"type": "conversation.item.input_audio_transcription.revised", "item_id": "a", "transcript": "日本に住む"})
-        await asyncio.wait_for(started.wait(), 2)
-        worker.on_event({"type": "conversation.item.input_audio_transcription.revised", "item_id": "a", "transcript": "日本で働く"})
-        stale_release.set()
-        await asyncio.wait_for(revised.wait(), 3)
-        assert cancelled.is_set()
-        assert output[-1] == ((0, 1, "a"), "在日本", "暂译")
+        worker.on_event({"type": "input_audio_buffer.committed", "item_id": "a"})
+        await asyncio.sleep(0)
+        assert not transcripts and not requests
         worker.on_event({"type": "conversation.item.input_audio_transcription.completed", "item_id": "a", "transcript": "日本で働く"})
         await asyncio.wait_for(translated.wait(), 2)
-        assert requests == [("日本に住む", True), ("日本で働く", True), ("日本で働く", False)]
-        assert ((0, 1, "a"), "住在", "暂译中") in output
-        assert not any(text == "住在东京" for _, text, _ in output)
+        assert [part.text for _, part in transcripts] == ["日本で働く"]
+        assert requests == ["日本で働く"]
+        assert ((0, 1, "a"), "在", "翻译中") in output
         assert output[-1] == ((0, 1, "a"), "在日本工作", "已翻译")
 
     asyncio.run(exercise())
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_history_keeps_old_rows_and_scroll_position_when_a_new_segment_arrives(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant.__main__ import MainWindow
+    from ai_japanese_interview_assistant.cloud_gui import Row, DeviceScan
+    from ai_japanese_interview_assistant.transcription import TranscriptPart
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(DeviceScan, "run", lambda self: self.result.emit([]))
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    cloud = window.cloud
+    try:
+        deadline = monotonic() + 3
+        while (window.diagnostic.scan is not None or cloud.scan is not None) and monotonic() < deadline:
+            app.processEvents()
+            sleep(0.01)
+        assert window.diagnostic.scan is None and cloud.scan is None
+        cloud.session_id = 1
+        cloud.state = "active"
+        keys = [(1, 1, str(index)) for index in range(500)]
+        cloud.rows.update({key: Row(ja=f"質問 {key[-1]}", zh=f"问题 {key[-1]}", finalized=True) for key in keys})
+        cloud.dirty = True
+        cloud.render_history()
+        app.processEvents()
+        cloud.history.selectRow(5)
+        scroll = cloud.history.verticalScrollBar()
+        scroll.setValue(3)
+        newest = (1, 1, "500")
+        cloud.add_transcript((newest, TranscriptPart("500", "次の質問", final=True)))
+        cloud.add_translation(newest, "下一个问题", "已翻译")
+        cloud.render_history()
+        assert cloud.history.rowCount() == 501
+        assert cloud.history.item(0, 1).text() == "问题 0"
+        assert cloud.history.item(500, 1).text() == "下一个问题"
+        assert cloud.current_row()[0] == keys[5]
+        assert scroll.value() == 3
+        cloud.latest.click()
+        assert cloud.current_row()[0] == newest
+        assert scroll.value() == scroll.maximum()
+        next_key = (1, 1, "501")
+        cloud.add_transcript((next_key, TranscriptPart("501", "最後の質問", final=True)))
+        cloud.render_history()
+        assert cloud.current_row()[0] == next_key
+        assert scroll.value() == scroll.maximum()
+    finally:
+        window.close()
+        app.processEvents()
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")

@@ -15,7 +15,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.closing = False
         self.setWindowTitle("AI 日语面试助手")
-        self.resize(920, 590)
+        self.resize(920, 710)
         self.tabs = QTabWidget()
         self.diagnostic = DiagnosticPane(self)
         self.diagnostic.idle.connect(self.retry_close)

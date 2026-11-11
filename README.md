@@ -4,7 +4,7 @@ Windows 11 x64 桌面应用。面向日语模拟面试和已获授权的线上�
 
 | 状态 | 内容 |
 | --- | --- |
-| 已完成 | 实时日中字幕与自动修正、OpenAI / DeepSeek / Anthropic 选择、本地日语转写、离线测试及真实 WASAPI 设备枚举 |
+| 已完成 | 逐字显示的日中字幕、常驻对话历史、OpenAI / DeepSeek / Anthropic 选择、本地日语转写、离线测试及真实 WASAPI 设备枚举 |
 | 进行中 | 实际会议采样、服务商真实 API、30 分钟联调和延迟验收 |
 | 未实现 | 按应用独立采集留待后续版本 |
 
@@ -24,9 +24,9 @@ py -3.13 -m venv .venv
 
 | 服务商 | 日语语音转写 | 中文翻译与回答 |
 | --- | --- | --- |
-| OpenAI | OpenAI Realtime，讲话过程中显示增量 | OpenAI `gpt-6-luna` |
-| DeepSeek | 本机 Whisper，讲话时滚动识别，断句后定稿 | DeepSeek `deepseek-flash` |
-| Anthropic | 本机 Whisper，讲话时滚动识别，断句后定稿 | Claude `claude-haiku-5-5` |
+| OpenAI | OpenAI Realtime，按确认的语段显示 | OpenAI `gpt-6-luna` |
+| DeepSeek | 本机 Whisper，断句后识别 | DeepSeek `deepseek-flash` |
+| Anthropic | 本机 Whisper，断句后识别 | Claude `claude-haiku-5-5` |
 
 **只有 DeepSeek Key 时**，在项目目录执行一次下列命令。Anthropic 使用相同的本地语音组件。多语言 Whisper base 模型约 148 MB，下载完成后在 CPU 上运行。 [Whisper 模型](https://huggingface.co/Systran/faster-whisper-base/tree/a80717a3a48b1b28aa687bca146cb7301feae1b1)
 
@@ -59,7 +59,7 @@ py -3.13 -m venv .venv
 
 默认仅显示最终段数与首个增量耗时。需要在终端查看日语定稿时加 `--show-text`。默认 pytest 使用协议测试替身和本地分段样本，真实服务需用上面的命令单独验证。
 
-桌面默认打开「实时面试辅助」。日语与中文逐字显示，同一行的暂译会随更新的日语原文重新生成，断句后按定稿再翻译。持续讲话可能产生多次文本请求，字幕延迟取决于本机识别速度和服务商响应。点「历史」可选中旧字幕，本次会话的翻译异常可以重试。暂停和停止释放音频并取消请求。暂停后可继续同一次授权会话，停止后历史仍可查看和复制。上述 WAV 云端转写命令使用 OpenAI Realtime。
+桌面默认打开「实时面试辅助」。确认一段日语后新增一行，中文随翻译响应逐字显示。下方「历史对话」可滚动并选中任意一段。查看旧对话时会保留所选行和滚动位置，点「回到最新」可继续跟随。历史保留到关闭软件。本次会话的翻译异常可以重试。暂停和停止释放音频并取消请求。暂停后可继续同一次授权会话。上述 WAV 云端转写命令使用 OpenAI Realtime。
 
 ## 无采音验证回答
 
@@ -87,8 +87,8 @@ API Key 可在密码输入框中仅供本次运行使用。开发时按所选服
 | 项目 | 结果 |
 | --- | --- |
 | 干净运行时与锁定依赖 | Windows 11 x64、CPython 3.13.12，`pip check` 通过 |
-| 完整自动化套件 | 51 项通过，包括离屏 Qt、真实设备枚举、字幕逐字显示与替换、模拟采集生命周期及三家服务商协议替身 |
-| 本地 Whisper | 在 Windows 11 上用真实模型离线识别公开日语发音片段。按实时速度播放拼接样本，首次临时字幕在 1.53 秒出现，讲话在 2.38 秒结束。测试片段由 Spesco 发布，CC BY-SA 4.0。 [Ja-konnichiwa.ogg](https://commons.wikimedia.org/wiki/File:Ja-konnichiwa.ogg) |
+| 完整自动化套件 | 51 项通过，包括离屏 Qt、真实设备枚举、字幕逐字追加、501 段历史保留和阅读位置、模拟采集生命周期及三家服务商协议替身 |
+| 本地 Whisper | 在 Windows 11 上用真实模型离线识别公开日语发音片段。测试片段由 Spesco 发布，CC BY-SA 4.0。 [Ja-konnichiwa.ogg](https://commons.wikimedia.org/wiki/File:Ja-konnichiwa.ogg) |
 | 实际采集 | 待验证浏览器、Teams、Zoom、麦克风、USB/蓝牙切换及真机生命周期 |
 | 真实 API 与 30 分钟联调 | 待在有可用 Key 和已授权素材的环境验证，包括错误 Key、限流、断网、分类质量和回答时长 |
 | p50/p95 | 待实测，未生成延迟数据 |

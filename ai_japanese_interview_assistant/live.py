@@ -1,6 +1,5 @@
 """Qt worker coordinating live audio, speech recognition, and text jobs."""
 import asyncio
-from dataclasses import dataclass
 from threading import Event
 from time import monotonic
 
@@ -13,13 +12,6 @@ from .local_asr import LocalAsrError, load_decoder, run_local_transcription
 from .services import TextService, client_for, error_message
 from .telemetry import Event as LogEvent, record
 from .transcription import AudioProcessor, RealtimeError, TranscriptBook, run_transcription
-
-
-@dataclass
-class CaptionPreview:
-    source: str = ""
-    last_request: float = 0.0
-    timer: asyncio.TimerHandle | None = None
 
 
 class LiveWorker(QThread):
@@ -42,7 +34,6 @@ class LiveWorker(QThread):
         self.buffer = AudioBuffer()
         self.book = TranscriptBook()
         self.jobs = {}
-        self.previews = {}
         self.loop = None
         self.runner = None
 
@@ -122,7 +113,7 @@ class LiveWorker(QThread):
                     decoder = await asyncio.to_thread(load_decoder)
                     if self.isInterruptionRequested():
                         return
-                    self.status.emit("asr", "本地实时转写已就绪")
+                    self.status.emit("asr", "本地转写已就绪，断句后出字幕")
                     await run_local_transcription(
                         decoder, self.audio_commands(), self.on_event, on_ending=self.stop_text_and_audio,
                     )
@@ -135,10 +126,6 @@ class LiveWorker(QThread):
     def stop_text_and_audio(self):
         self.requestInterruption()
         self.buffer.close()
-        for preview in self.previews.values():
-            if preview.timer is not None:
-                preview.timer.cancel()
-        self.previews.clear()
         for task in self.jobs.values():
             task.cancel()
 
@@ -185,52 +172,14 @@ class LiveWorker(QThread):
         if part is None:
             return
         row_id = (self.session_id, self.generation, part.item_id)
-        self.transcript.emit((row_id, part))
-        if kind == "input_audio_buffer.committed":
-            self.order.emit(tuple((self.session_id, self.generation, part.item_id) for part in self.book.parts))
-        elif part.final or part.failed:
-            self.cancel_preview(row_id)
-            if part.final and part.text:
-                self.start_translation(row_id, part.text)
-                if self.auto_answer:
-                    self.start_answer(row_id, part.text, True)
-        elif part.text:
-            self.queue_preview(row_id, part.text)
-
-    def queue_preview(self, row_id, text):
-        if row_id not in self.previews and len(self.previews) >= 8:
-            return
-        preview = self.previews.setdefault(row_id, CaptionPreview())
-        if preview.source == text:
-            return
-        if preview.source and not text.startswith(preview.source):
-            self.cancel_preview_job(row_id)
-        preview.source = text
-        if preview.timer is None:
-            delay = max(0.25, preview.last_request + 1.8 - monotonic())
-            preview.timer = asyncio.get_running_loop().call_later(delay, self.send_preview, row_id)
-
-    def send_preview(self, row_id):
-        preview = self.previews.get(row_id)
-        if preview is None or self.isInterruptionRequested():
-            return
-        preview.timer = None
-        job_id = ("preview", row_id)
-        self.cancel_preview_job(row_id)
-        if len(self.jobs) < 8:
-            preview.last_request = monotonic()
-            self.start_job(job_id, self.translate, row_id, preview.source, True)
-
-    def cancel_preview(self, row_id):
-        preview = self.previews.pop(row_id, None)
-        if preview is not None and preview.timer is not None:
-            preview.timer.cancel()
-        self.cancel_preview_job(row_id)
-
-    def cancel_preview_job(self, row_id):
-        job = self.jobs.pop(("preview", row_id), None)
-        if job is not None:
-            job.cancel()
+        if kind != "input_audio_buffer.committed" and (part.final or part.failed):
+            self.transcript.emit((row_id, part))
+        if kind == "input_audio_buffer.committed" or part.final or part.failed:
+            self.order.emit(tuple((self.session_id, self.generation, entry.item_id) for entry in self.book.parts))
+        if kind.endswith("transcription.completed") and part.text:
+            self.start_translation(row_id, part.text)
+            if self.auto_answer:
+                self.start_answer(row_id, part.text, True)
 
     def start_translation(self, row_id, text):
         job_id = ("translation", row_id)
@@ -244,39 +193,29 @@ class LiveWorker(QThread):
             return
         task = asyncio.create_task(handler(*args))
         self.jobs[job_id] = task
-        task.add_done_callback(lambda task: self.forget_job(job_id, task))
+        task.add_done_callback(lambda task: self.jobs.pop(job_id, None))
 
-    def forget_job(self, job_id, task):
-        if self.jobs.get(job_id) is task:
-            self.jobs.pop(job_id)
-
-    async def translate(self, row_id, text, preview=False):
+    async def translate(self, row_id, text):
         result = ""
         started = monotonic()
-        if not preview:
-            self.translation.emit(row_id, result, "翻译中")
+        self.translation.emit(row_id, result, "翻译中")
         self.status.emit("text", "正在翻译…")
         try:
             if self.isInterruptionRequested():
                 raise asyncio.CancelledError
-            async for delta in self.service.translate(text, preview=preview):
+            async for delta in self.service.translate(text):
                 result += delta
-                self.translation.emit(row_id, result, "暂译中" if preview else "翻译中")
+                self.translation.emit(row_id, result, "翻译中")
         except asyncio.CancelledError:
-            if not preview:
-                self.translation.emit(row_id, result, "翻译已取消")
+            self.translation.emit(row_id, result, "翻译已取消")
             raise
         except Exception as exc:
             record(LogEvent.API_ERROR)
-            if not preview:
-                self.translation.emit(row_id, result, "翻译失败")
+            self.translation.emit(row_id, result, "翻译失败")
             self.status.emit("text", error_message(exc))
         else:
-            if preview:
-                self.translation.emit(row_id, result, "暂译")
-            else:
-                record(LogEvent.TRANSLATION_READY, monotonic() - started)
-                self.translation.emit(row_id, result, "已翻译")
+            record(LogEvent.TRANSLATION_READY, monotonic() - started)
+            self.translation.emit(row_id, result, "已翻译")
             self.status.emit("text", "文本 API 已连接")
 
     def start_answer(self, row_id, text, automatic=False):
