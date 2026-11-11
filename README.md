@@ -67,6 +67,8 @@ py -3.13 -m venv .venv
 
 宽窗口并排显示实时字幕和历史对话，窄窗口会改为上下排列。可拖动分隔线调整空间。「设置」在独立窗口打开，主界面上的历史和监听控制仍可使用。玻璃卡片透出应用内部的模糊背景。
 
+在「设置 → 界面主题」可即时切换石墨银、深海青、冰川白、暖雾米和纯黑。首次使用默认纯黑，开始监听或正常关闭软件后会记住所选主题。
+
 ```powershell
 .\.venv\Scripts\python.exe -m ai_japanese_interview_assistant.validate_text --classification tests/fixtures/questions.json --send-authorized-text
 .\.venv\Scripts\python.exe -m ai_japanese_interview_assistant.validate_text --question 'チームで意見が分かれた場合、どうしますか。' --send-authorized-text --show-text

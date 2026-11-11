@@ -146,6 +146,40 @@ def test_glass_layout_keeps_history_visible_and_settings_in_sync():
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_selected_theme_is_restored_after_restart():
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant.__main__ import MainWindow, configure_application
+
+    app = QApplication.instance() or QApplication([])
+    configure_application(app)
+    window = MainWindow()
+    window.show()
+    try:
+        wait_until(app, lambda: window.cloud.theme.isEnabled())
+        theme = window.cloud.theme
+        assert [theme.itemData(index) for index in range(theme.count())] == [
+            "graphite", "ocean", "glacier", "sand", "black",
+        ]
+        theme.setCurrentIndex(theme.findData("glacier"))
+        assert app.property("interviewTheme") == "glacier"
+    finally:
+        window.close()
+        wait_until(app, lambda: not window.isVisible())
+
+    configure_application(app)
+    reopened = MainWindow()
+    reopened.show()
+    try:
+        wait_until(app, lambda: reopened.cloud.theme.isEnabled())
+        assert reopened.cloud.theme.currentData() == "glacier"
+        assert app.property("interviewTheme") == "glacier"
+    finally:
+        reopened.close()
+        wait_until(app, lambda: not reopened.isVisible())
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
 def test_deepseek_worker_translates_and_automatically_answers_a_local_question(monkeypatch):
     import asyncio
     import json

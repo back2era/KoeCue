@@ -3,8 +3,7 @@ import sys
 import os
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFontDatabase, QKeySequence, QPalette, QShortcut
+from PySide6.QtGui import QFontDatabase, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QHBoxLayout, QMainWindow, QPushButton, QStackedWidget,
     QVBoxLayout,
@@ -12,7 +11,7 @@ from PySide6.QtWidgets import (
 
 from .cloud_gui import CloudPane
 from .diagnostic import DiagnosticPane
-from .glass import BrandMark, GlassCanvas, GLASS_STYLE, GlassStyle, PageFade, glass_panel, plain_label
+from .glass import DEFAULT_THEME, BrandMark, GlassCanvas, GlassStyle, PageFade, apply_theme, glass_panel, plain_label
 
 
 class MainWindow(QMainWindow):
@@ -48,6 +47,7 @@ class MainWindow(QMainWindow):
         self.diagnostic.idle.connect(self.retry_close)
         self.diagnostic.idle.connect(self.sync_audio_controls)
         self.cloud = CloudPane(self)
+        self.cloud.theme_changed.connect(lambda theme_id: apply_theme(QApplication.instance(), theme_id))
         self.cloud.idle.connect(self.retry_close)
         self.cloud.idle.connect(self.sync_audio_controls)
         self.tabs.addWidget(self.cloud)
@@ -98,7 +98,6 @@ class MainWindow(QMainWindow):
 
 
 def configure_application(app):
-    app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
     app.setStyle(GlassStyle())
     fonts = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "Fonts"
     for family, file in (("Microsoft YaHei UI", "msyh.ttc"), ("Yu Gothic UI", "YuGothM.ttc")):
@@ -108,24 +107,7 @@ def configure_application(app):
     font.setFamilies(["Inter", "Microsoft YaHei UI", "Yu Gothic UI", "Segoe UI"])
     font.setPointSize(10)
     app.setFont(font)
-    palette = QPalette()
-    for role, color in {
-        QPalette.ColorRole.Window: "#17223d",
-        QPalette.ColorRole.WindowText: "#ecf2ff",
-        QPalette.ColorRole.Base: "#1a2540",
-        QPalette.ColorRole.AlternateBase: "#253153",
-        QPalette.ColorRole.Text: "#ecf2ff",
-        QPalette.ColorRole.PlaceholderText: "#a1adc0",
-        QPalette.ColorRole.Button: "#2b3b62",
-        QPalette.ColorRole.ButtonText: "#ecf2ff",
-        QPalette.ColorRole.Highlight: "#91acfb",
-        QPalette.ColorRole.HighlightedText: "#121c34",
-    }.items():
-        palette.setColor(role, QColor(color))
-    for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText):
-        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor("#8190a7"))
-    app.setPalette(palette)
-    app.setStyleSheet(GLASS_STYLE)
+    apply_theme(app, DEFAULT_THEME)
 
 
 def main():

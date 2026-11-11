@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from .diagnostic import DeviceScan
 from .config import OPENAI, PROVIDERS
 from .credentials import credential
-from .glass import GlassComboBox, GlassDialog, glass_panel, plain_label
+from .glass import DEFAULT_THEME, THEMES, GlassComboBox, GlassDialog, glass_panel, plain_label
 from .interview import Answer
 from .live import LiveWorker
 from .profile_gui import PrivateIO, ProfileDialog
@@ -72,6 +72,7 @@ class Row:
 
 class CloudPane(QWidget):
     idle = Signal()
+    theme_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,6 +102,11 @@ class CloudPane(QWidget):
         self.source.setAccessibleName("音频来源")
         self.source.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.refresh = QPushButton("刷新设备")
+        self.theme = GlassComboBox()
+        self.theme.setAccessibleName("界面主题")
+        for theme_id, theme in THEMES.items():
+            self.theme.addItem(theme.label, theme_id)
+        self.theme.setCurrentIndex(self.theme.findData(DEFAULT_THEME))
         self.provider = GlassComboBox()
         self.provider.setAccessibleName("API 服务商")
         for code, provider in PROVIDERS.items():
@@ -176,6 +182,7 @@ class CloudPane(QWidget):
         self.render_timer.start()
         self.refresh.clicked.connect(self.refresh_devices)
         self.source.currentIndexChanged.connect(self.source_changed)
+        self.theme.currentIndexChanged.connect(lambda: self.theme_changed.emit(self.theme.currentData()))
         self.provider.currentIndexChanged.connect(self.provider_changed)
         self.consent.toggled.connect(self.controls)
         self.auto_answer.toggled.connect(self.select_row)
@@ -287,6 +294,12 @@ class CloudPane(QWidget):
     def build_settings(self):
         self.settings = GlassDialog("设置", self)
         self.settings.resize(640, 500)
+        appearance = glass_panel()
+        appearance_row = QHBoxLayout(appearance)
+        appearance_row.setContentsMargins(16, 12, 16, 12)
+        appearance_row.addWidget(plain_label("界面主题", "sectionTitle"), 1)
+        appearance_row.addWidget(self.theme)
+        self.settings.body.addWidget(appearance)
         card = glass_panel()
         settings = QVBoxLayout(card)
         settings.setContentsMargins(16, 14, 16, 14)
@@ -446,6 +459,7 @@ class CloudPane(QWidget):
         idle = (self.worker is None and self.scan is None and self.credential_worker is None
                 and self.settings_worker is None and not self.closing)
         configurable = idle and self.state != "paused"
+        self.theme.setEnabled(self.preferences_ready and not self.closing)
         for widget in (self.source, self.refresh, self.provider, self.key, self.vault_button, self.consent, self.auto_answer, self.profile):
             widget.setEnabled(configurable)
         self.revoke.setEnabled(bool(self.approved_facts))
@@ -692,10 +706,13 @@ class CloudPane(QWidget):
         with QSignalBlocker(self.provider):
             self.provider.setCurrentIndex(self.provider.findData(preferences.provider))
         self.auto_answer.setChecked(preferences.auto_answer)
+        self.theme.setCurrentIndex(self.theme.findData(preferences.theme))
         self.restore_audio_source()
 
     def persist_preferences(self):
-        preferences = Preferences(self.provider.currentData(), *self.audio_selection, self.auto_answer.isChecked())
+        preferences = Preferences(
+            self.provider.currentData(), *self.audio_selection, self.auto_answer.isChecked(), self.theme.currentData(),
+        )
         changed = preferences != self.preferences
         key = self.key.text().strip() if self.key.isModified() else ""
         if not changed and not key:
