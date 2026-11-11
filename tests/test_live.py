@@ -14,7 +14,7 @@ def test_revoking_personal_info_cancels_a_scoped_answer():
 
         class BlockingText:
             async def structured(self, purpose, prompt, value, schema, max_tokens):
-                assert purpose == "question"
+                assert purpose == "draft"
                 entered.set()
                 await asyncio.Future()
 
@@ -35,7 +35,7 @@ def test_revoking_personal_info_cancels_a_scoped_answer():
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=1)
         assert updates == [
-            (row_id, None, "正在检查问题…", True),
+            (row_id, None, "正在生成建议…", True),
             (row_id, None, "回答已取消", True),
         ]
 

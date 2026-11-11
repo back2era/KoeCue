@@ -14,7 +14,7 @@ from .config import OPENAI, PROVIDERS
 from .credentials import credential
 from .glass import DEFAULT_THEME, THEMES, GlassComboBox, GlassDialog, glass_panel, plain_label
 from .interview import Answer
-from .live import LiveWorker
+from .live import ANSWER_PENDING, LiveWorker
 from .personal import PersonalInfo
 from .profile_gui import PrivateIO, ProfileDialog
 from .settings import Preferences, load_preferences, save_preferences
@@ -125,7 +125,7 @@ class CloudPane(QWidget):
             vault_menu.addAction(action, lambda checked=False, op=operation: self.use_vault(op))
         self.vault_button.setMenu(vault_menu)
         self.consent = QCheckBox()
-        self.auto_answer = QCheckBox("自动识别问题并生成回答")
+        self.auto_answer = QCheckBox("自动为面试发言生成建议")
         self.auto_answer.setChecked(True)
         self.start = QPushButton("开始云端监听")
         self.pause = QPushButton("暂停")
@@ -466,7 +466,7 @@ class CloudPane(QWidget):
         retryable = row and row.finalized and row.ja and row.translation not in {"翻译中", "已翻译"}
         self.retry.setEnabled(bool(self.can_send_row(key) and retryable))
         self.suggest.setEnabled(bool(self.can_send_row(key) and row and row.finalized and
-                                     row.ja and row.answer_status != "正在检查问题…"))
+                                     row.ja and row.answer_status != ANSWER_PENDING))
         self.copy.setEnabled(bool(row and row.answer))
         self.latest.setEnabled(bool(self.rendered))
         self.refresh_status()
@@ -563,7 +563,7 @@ class CloudPane(QWidget):
             if row.translation == "翻译中":
                 row.translation = "翻译已取消"
                 self.mark_changed(key)
-            if row.answer_status == "正在检查问题…":
+            if row.answer_status == ANSWER_PENDING:
                 row.answer_status = "回答已取消"
                 self.mark_changed(key)
         self.controls()
@@ -653,7 +653,7 @@ class CloudPane(QWidget):
         if self.worker is not None:
             self.worker.revoke_profile()
             for key, row in self.rows.items():
-                if row.answer_status == "正在检查问题…":
+                if row.answer_status == ANSWER_PENDING:
                     row.answer_status = "回答已取消"
                     self.mark_changed(key)
 
@@ -809,7 +809,7 @@ class CloudPane(QWidget):
         translation = row.translation if row else ""
         self.translation_state.setText(translation)
         answer = row.answer if row else None
-        placeholder = ("识别到面试问题后会自动生成日语参考回答。" if self.auto_answer.isChecked()
+        placeholder = ("每段发言识别完成后会自动生成日语回应建议。" if self.auto_answer.isChecked()
                        else "选中字幕后可生成日语参考回答。")
         self.answer_ja.setText(answer.ja if answer else placeholder)
         self.answer_zh.setText(answer.zh if answer else "")

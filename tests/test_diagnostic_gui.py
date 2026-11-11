@@ -182,7 +182,7 @@ def test_selected_theme_is_restored_after_restart():
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
-def test_deepseek_worker_translates_and_automatically_answers_a_local_question(monkeypatch):
+def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_statement(monkeypatch):
     import asyncio
     import json
 
@@ -194,24 +194,23 @@ def test_deepseek_worker_translates_and_automatically_answers_a_local_question(m
         finished = asyncio.Event()
         translations = []
         answers = []
-        question = "要件が変わったらどうしますか。"
+        statement = "次に、担当業務についてご説明します。"
 
         def handle(request):
             assert str(request.url) == DEEPSEEK.url
             assert request.headers["authorization"] == "Bearer test-deepseek"
             payload = json.loads(request.content)
             if payload.get("stream"):
-                assert payload["input"] == question
+                assert payload["input"] == statement
                 return httpx.Response(200, text=(
-                    'data: {"type":"response.output_text.delta","delta":"需求变更时你会怎么办？"}\n\n'
+                    'data: {"type":"response.output_text.delta","delta":"接下来我会介绍岗位职责。"}\n\n'
                     'data: {"type":"response.completed"}\n\n'
                 ))
             name = payload["text"]["format"]["name"]
-            if name == "question":
-                assert payload["input"] == question
+            if name == "draft":
+                assert json.loads(payload["input"]) == {"question": statement, "facts": []}
             structured = {
-                "question": {"question": True, "personal": False, "categories": []},
-                "draft": {"before_ja": "影響範囲を確認します。", "before_zh": "我会确认影响范围。",
+                "draft": {"before_ja": "はい、よろしくお願いします。", "before_zh": "好的，请您介绍。",
                           "after_ja": "", "after_zh": "", "fact_ids": []},
                 "verify_answer": {"safe": True},
             }[name]
@@ -245,7 +244,7 @@ def test_deepseek_worker_translates_and_automatically_answers_a_local_question(m
                     finished.set()
 
         monkeypatch.setattr(live, "client_for", client_for)
-        monkeypatch.setattr(live, "load_decoder", lambda: lambda pcm: question)
+        monkeypatch.setattr(live, "load_decoder", lambda: lambda pcm: statement)
         monkeypatch.setattr(live, "run_transcription", no_openai)
         monkeypatch.setattr(live, "record", lambda *args: None)
         worker = live.LiveWorker(1, None, "test-deepseek", provider=DEEPSEEK, auto_answer=True)
@@ -253,8 +252,8 @@ def test_deepseek_worker_translates_and_automatically_answers_a_local_question(m
         worker.translation.connect(on_translation)
         worker.answer.connect(on_answer)
         await asyncio.wait_for(worker._main(), 3)
-        assert translations == ["需求变更时你会怎么办？"]
-        assert answers == [((0, 1, "local-1"), "影響範囲を確認します。", "我会确认影响范围。")]
+        assert translations == ["接下来我会介绍岗位职责。"]
+        assert answers == [((0, 1, "local-1"), "はい、よろしくお願いします。", "好的，请您介绍。")]
 
     asyncio.run(exercise())
 

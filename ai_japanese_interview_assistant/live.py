@@ -15,6 +15,9 @@ from .telemetry import Event as LogEvent, record
 from .transcription import AudioProcessor, RealtimeError, TranscriptBook, run_transcription
 
 
+ANSWER_PENDING = "正在生成建议…"
+
+
 class LiveWorker(QThread):
     status = Signal(str, str)
     transcript = Signal(object)
@@ -243,7 +246,7 @@ class LiveWorker(QThread):
         def allowed():
             return not self.isInterruptionRequested() and (not scoped or not self.sharing_revoked.is_set())
 
-        self.answer.emit(row_id, None, "正在检查问题…", scoped)
+        self.answer.emit(row_id, None, ANSWER_PENDING, scoped)
         try:
             answer = await self.interview.suggest(
                 text, automatic=automatic, facts=facts, personal_info=personal_info, allowed=allowed,
@@ -256,6 +259,5 @@ class LiveWorker(QThread):
         except Exception as exc:
             self.answer.emit(row_id, None, error_message(exc), scoped)
         else:
-            if answer:
-                record(LogEvent.ANSWER_READY, monotonic() - started)
-            self.answer.emit(row_id, answer, "回答已生成" if answer else "无需自动回答", scoped)
+            record(LogEvent.ANSWER_READY, monotonic() - started)
+            self.answer.emit(row_id, answer, "建议已生成", scoped)

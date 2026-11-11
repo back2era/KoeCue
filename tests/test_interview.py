@@ -21,15 +21,23 @@ class ScriptedText:
         return next(self.responses)
 
 
-def test_automatic_mode_does_not_generate_for_a_statement():
-    text = ScriptedText([{"question": False, "personal": False, "categories": []}])
-    assert asyncio.run(InterviewService(text).suggest("今日は面接の日です。", automatic=True)) is None
-    assert [call[0] for call in text.calls] == ["question"]
+def test_automatic_mode_suggests_an_acknowledgement_for_a_statement():
+    text = ScriptedText([
+        {"question": False, "personal": False, "categories": []},
+        {"before_ja": "本日はよろしくお願いいたします。", "before_zh": "今天请多关照。",
+         "after_ja": "", "after_zh": "", "fact_ids": []},
+        {"safe": True},
+    ])
+    fact = Fact("fixture", "project", "回路を作りました。", "我制作了电路。")
+
+    answer = asyncio.run(InterviewService(text).suggest("それでは面接を始めます。", automatic=True, facts=(fact,)))
+
+    assert answer == Answer("本日はよろしくお願いいたします。", "今天请多关照。")
+    assert json.loads(text.calls[1][1])["facts"] == []
 
 
 def test_question_yields_bilingual_answer_after_check():
     text = ScriptedText([
-        {"question": True, "personal": False, "categories": []},
         {"before_ja": "まず、要件を確認します。", "before_zh": "首先确认需求。",
          "after_ja": "次に、優先順位を決めます。", "after_zh": "接着确定优先级。", "fact_ids": []},
         {"safe": True},
@@ -40,7 +48,6 @@ def test_question_yields_bilingual_answer_after_check():
 
 def test_unsupported_personal_claim_is_not_shown():
     text = ScriptedText([
-        {"question": True, "personal": False, "categories": []},
         {"before_ja": "私は東京大学を卒業しました。", "before_zh": "我毕业于东京大学。",
          "after_ja": "", "after_zh": "", "fact_ids": []},
         {"safe": False},
@@ -49,11 +56,21 @@ def test_unsupported_personal_claim_is_not_shown():
         asyncio.run(InterviewService(text).suggest("どのように進めますか。", automatic=True))
 
 
-def test_personal_question_without_facts_does_not_request_a_draft():
-    text = ScriptedText([{"question": True, "personal": True, "categories": ["project"]}])
-    with pytest.raises(ServiceError, match="真实"):
-        asyncio.run(InterviewService(text).suggest("研究の経験を教えてください。", automatic=True))
-    assert len(text.calls) == 1
+@pytest.mark.parametrize("facts", [(), (Fact("fixture", "education", "工学を学びました。", "我学过工学。"),)])
+def test_personal_question_without_relevant_facts_gets_a_generic_suggestion(facts):
+    question = "研究の経験を教えてください。"
+    draft = {"before_ja": "研究に取り組む際は、まず目的と仮説を整理します。",
+             "before_zh": "开展研究时，我会先梳理目标和假设。",
+             "after_ja": "", "after_zh": "", "fact_ids": []}
+    classification = [{"question": True, "personal": True, "categories": ["project"]}] if facts else []
+    text = ScriptedText([*classification, draft, {"safe": True}])
+
+    answer = asyncio.run(InterviewService(text).suggest(question, automatic=True, facts=facts))
+
+    assert answer == Answer("研究に取り組む際は、まず目的と仮説を整理します。", "开展研究时，我会先梳理目标和假设。")
+    assert text.calls[-2][0] == "draft"
+    assert json.loads(text.calls[-2][1]) == {"question": question, "facts": []}
+    assert text.calls[-1][0] == "verify_answer"
 
 
 def test_interview_context_reaches_only_the_answer_draft():
@@ -125,7 +142,7 @@ def test_verified_facts_and_resume_excerpts_share_a_two_item_request_limit():
 @pytest.mark.parametrize("ids,ja,zh", [
     (["unknown"], ["無線信号を測定しました。"], ["我测量了无线电信号。"]),
     (["excerpt_1"], ["無線信号を測定しました。"], []),
-    ([], [], []),
+    ([], ["無線信号を測定しました。"], ["我测量了无线电信号。"]),
 ])
 def test_missing_or_invalid_excerpt_attribution_stops_before_verification(ids, ja, zh):
     draft = dict(EXCERPT_DRAFT, excerpt_ids=ids, excerpt_ja=ja, excerpt_zh=zh)
@@ -145,6 +162,21 @@ def test_answer_is_rejected_when_one_language_overstates_the_excerpt():
     assert json.loads(text.calls[2][1])["excerpts"] == [{
         "source": "I measured radio signals.", "ja": "無線信号を測定しました。", "zh": "我带领团队测量了无线电信号。",
     }]
+
+
+def test_draft_can_use_a_generic_suggestion_when_no_excerpt_answers_the_question():
+    draft = {
+        "before_ja": "測定する場合、まず測定条件を確認します。", "before_zh": "进行测量时，我会先确认测量条件。",
+        "after_ja": "", "after_zh": "", "fact_ids": [], "excerpt_ids": [], "excerpt_ja": [], "excerpt_zh": [],
+    }
+    text = ScriptedText([EXCERPT_CLASSIFICATION, draft, {"safe": True}])
+
+    answer = asyncio.run(InterviewService(text).suggest(EXCERPT_QUESTION, automatic=True, personal_info=excerpt_info()))
+
+    assert answer == Answer("測定する場合、まず測定条件を確認します。", "进行测量时，我会先确认测量条件。")
+    assert json.loads(text.calls[-1][1]) == {
+        "ja": ["測定する場合、まず測定条件を確認します。", ""], "zh": ["进行测量时，我会先确认测量条件。", ""],
+    }
 
 
 @pytest.mark.parametrize("stage,expected", [
