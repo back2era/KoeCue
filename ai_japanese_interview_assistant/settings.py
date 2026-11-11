@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QSettings
 
+from . import APP_NAME
 from .answer_format import ANSWER_LEVELS, DEFAULT_ANSWER_LEVEL
 from .config import PROVIDERS
 from .glass import DEFAULT_THEME, THEMES
@@ -51,4 +52,4 @@ def save_preferences(preferences):
     store.setValue("answer/level", preferences.answer_level)
     store.sync()
     if store.status() != QSettings.Status.NoError:
-        raise ProfileError("无法保存面试助手设置。")
+        raise ProfileError(f"无法保存 {APP_NAME} 设置。")

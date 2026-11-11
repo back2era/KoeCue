@@ -3,6 +3,7 @@
 from .config import OPENAI
 from .profiles import ProfileError
 
+# Keep the existing vault service name so KoeCue can read previously saved keys.
 SERVICE = "AI Japanese Interview Assistant"
 
 

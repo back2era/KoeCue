@@ -1,4 +1,4 @@
-# AI Japanese Interview Assistant
+# KoeCue
 
 Windows 11 x64 桌面应用。面向日语模拟面试和已获授权的线上面试，提供本地音频诊断、日语字幕、简体中文翻译和双语口述参考答案。
 
@@ -92,7 +92,7 @@ Windows 任务栏会使用应用自己的波形图标。升级后请关闭旧窗
 2. 可填写对方公司、应聘岗位和场景说明。确认简历提取结果后，点击表单下方的「保存个人信息」。勾选当次愿意分享的资料类别，再点击「授权所选」并开始面试。
 3. 回答生成时才会向当前选定的服务商发送已授权的面试场景，以及最多两条相关的已核对事实或简历、简介片段。原始文件和路径留在本机。软件会核验来自摘录的双语陈述，资料不足时给出通用建议。可随时撤销分享，停止或更换服务商会重置授权。
 
-原有的双语事实仍可在「管理已核对事实」中编辑并按条授权。回答中采用的已核对事实保留原句。简历提取文字、简介和场景保存在 `%LOCALAPPDATA%\AIJapaneseInterviewAssistant\personal.json`，双语事实保存在同目录的 `profile.json`。两者均为本机普通 JSON。
+原有的双语事实仍可在「管理已核对事实」中编辑并按条授权。回答中采用的已核对事实保留原句。简历提取文字、简介和场景保存在 `%LOCALAPPDATA%\AIJapaneseInterviewAssistant\personal.json`，双语事实保存在同目录的 `profile.json`。两者均为本机普通 JSON。KoeCue 沿用该本地目录及现有 Windows 凭据条目，升级后可继续读取原有资料、设置和 API Key。
 
 已有安装升级后，如遇到 PDF 组件不可用，在项目目录运行 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`，然后重新启动。
 
@@ -123,4 +123,4 @@ Windows 任务栏会使用应用自己的波形图标。升级后请关闭旧窗
 
 WASAPI 回环采集所选**播放设备**上的共享模式混音。请让会议软件将声音输出到所选设备，并留意同一设备上的通知声。麦克风是单独的来源。设备变化后重新枚举并选择，受保护内容可能无法采集。开始采集前应明确范围并取得必要同意。 [Microsoft WASAPI 回环](https://learn.microsoft.com/windows/win32/coreaudio/loopback-recording)
 
-项目规则见 [AGENTS.md](AGENTS.md)。各阶段和验收项见 [开发计划](docs/superpowers/plans/2026-11-10-ai-japanese-interview-assistant.md)。
+项目规则见 [AGENTS.md](AGENTS.md)。各阶段和验收项见 [开发计划](docs/superpowers/plans/2026-11-10-koecue.md)。

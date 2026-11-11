@@ -198,7 +198,7 @@ def test_answer_defaults_to_focus_readings_and_expands_without_changing_copy(mon
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
 def test_application_waveform_icon_reaches_main_window_and_settings():
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QLabel
     from ai_japanese_interview_assistant.__main__ import MainWindow, configure_application
 
     app = QApplication.instance() or QApplication([])
@@ -206,6 +206,9 @@ def test_application_waveform_icon_reaches_main_window_and_settings():
     window = MainWindow()
     window.show()
     try:
+        assert app.applicationName() == "KoeCue"
+        assert window.windowTitle() == "KoeCue"
+        assert window.findChild(QLabel, "appTitle").text() == "KoeCue"
         icon = app.windowIcon()
         assert not icon.isNull()
         assert window.windowIcon().cacheKey() == icon.cacheKey()

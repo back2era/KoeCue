@@ -13,6 +13,7 @@ from PySide6.QtGui import QGuiApplication
 from .profiles import ProfileError, app_directory
 
 
+# Keep the Windows identity stable across display-name changes.
 APP_ID = "AIJapaneseInterviewAssistant.Desktop"
 _LOG = logging.getLogger(__name__)
 _Guid = ctypes.c_ubyte * 16

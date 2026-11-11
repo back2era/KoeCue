@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from . import APP_NAME
 from .cloud_gui import CloudPane
 from .diagnostic import DiagnosticPane
 from .glass import (
@@ -23,7 +24,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.closing = False
         self.taskbar_handle = None
-        self.setWindowTitle("AI 日语面试助手")
+        self.setWindowTitle(APP_NAME)
         self.resize(1120, 740)
         self.setMinimumSize(620, 540)
         canvas = GlassCanvas()
@@ -33,7 +34,7 @@ class MainWindow(QMainWindow):
         header = QHBoxLayout()
         header.setSpacing(10)
         header.addWidget(BrandMark())
-        header.addWidget(plain_label("AI 日语面试助手", "appTitle"), 1)
+        header.addWidget(plain_label(APP_NAME, "appTitle"), 1)
         nav = glass_panel("glassBar")
         nav_layout = QHBoxLayout(nav)
         nav_layout.setContentsMargins(4, 4, 4, 4)
@@ -114,6 +115,7 @@ class MainWindow(QMainWindow):
 
 
 def configure_application(app):
+    app.setApplicationName(APP_NAME)
     app.setWindowIcon(application_icon())
     app.setStyle(GlassStyle())
     fonts = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "Fonts"

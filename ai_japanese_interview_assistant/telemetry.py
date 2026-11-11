@@ -5,6 +5,7 @@ from logging.handlers import RotatingFileHandler
 from math import isfinite
 from threading import Lock
 
+from . import APP_NAME
 from .profiles import ProfileError, app_directory
 
 
@@ -25,7 +26,7 @@ class SessionLog:
         self.handler = RotatingFileHandler(directory / "assistant.log", maxBytes=128 * 1024,
                                            backupCount=2, encoding="utf-8")
         self.handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-        self.logger = logging.Logger("AI Japanese Interview Assistant", logging.INFO)
+        self.logger = logging.Logger(APP_NAME, logging.INFO)
         self.logger.addHandler(self.handler)
 
     def record(self, event: Event, elapsed=None):

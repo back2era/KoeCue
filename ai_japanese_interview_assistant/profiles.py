@@ -26,6 +26,7 @@ def app_directory():
     local = os.environ.get("LOCALAPPDATA")
     if not local:
         raise ProfileError("Windows 本地应用数据目录不可用。")
+    # The directory name is stable across display-name changes.
     return Path(local) / "AIJapaneseInterviewAssistant"
 
 

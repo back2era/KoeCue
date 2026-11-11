@@ -33,7 +33,7 @@ def test_windows_shell_receives_waveform_icon_and_separate_application_id(tmp_pa
         app = QApplication([])
         configure_application(app)
         window = QMainWindow()
-        window.setWindowTitle("Taskbar fixture")
+        window.setWindowTitle(app.applicationName())
         hwnd = taskbar.register_window(window)
         assert hwnd == int(window.winId()) and not window.isVisible()
 
@@ -52,7 +52,7 @@ def test_windows_shell_receives_waveform_icon_and_separate_application_id(tmp_pa
                     ctypes.oledll.ole32.PropVariantClear(ctypes.byref(value))
 
         assert property_value(5) == taskbar.APP_ID
-        assert property_value(4) == window.windowTitle()
+        assert property_value(4) == "KoeCue"
         assert "pythonw.exe" in property_value(2) and "launch.pyw" in property_value(2)
         icon_path, index = property_value(3).rsplit(",", 1)
         assert index == "0" and Path(icon_path).is_file()
