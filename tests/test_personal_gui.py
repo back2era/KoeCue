@@ -47,8 +47,12 @@ def test_personal_tab_imports_saves_and_only_shares_the_selected_group(monkeypat
         pane.role.setText("示例岗位")
         pane.scenario.setPlainText("技术一面")
         assert not pane.share.isEnabled()
+        assert pane.save.isVisible() and pane.save.isEnabled()
+        assert pane.save.objectName() == "primaryAction"
+        assert "未保存" in pane.status.text()
         pane.save.click()
         wait(app, lambda: pane.share_scenario.isEnabled())
+        assert pane.status.text() == "已保存到本机。"
         pane.share_scenario.setChecked(True)
         pane.share.click()
         assert window.cloud.approved_personal == PersonalInfo(

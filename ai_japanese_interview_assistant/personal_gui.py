@@ -36,7 +36,8 @@ class PersonalPane(QWidget):
         self.scenario = self.editor("场景说明", "例如：技术一面，重点介绍毕业设计，回答简短一点。", 90)
         self.import_button = QPushButton("导入简历")
         self.clear_resume = QPushButton("清空简历文本")
-        self.save = QPushButton("保存到本机")
+        self.save = QPushButton("保存个人信息")
+        self.save.setObjectName("primaryAction")
         self.share = QPushButton("授权所选")
         self.share.setObjectName("primaryAction")
         self.revoke = QPushButton("撤销资料授权")
@@ -54,7 +55,6 @@ class PersonalPane(QWidget):
         header = QHBoxLayout()
         header.addWidget(plain_label("个人信息", "pageTitle"), 1)
         header.addWidget(self.listening_status)
-        header.addWidget(self.save)
         layout.addLayout(header)
         scroll = QScrollArea()
         scroll.setObjectName("captionScroll")
@@ -97,6 +97,13 @@ class PersonalPane(QWidget):
         self.fields_layout.setStretch(1, 2)
 
         page.addStretch(1)
+        save_bar = glass_panel("glassBar")
+        save_layout = QHBoxLayout(save_bar)
+        save_layout.setContentsMargins(16, 9, 12, 9)
+        save_layout.addWidget(self.status, 1)
+        save_layout.addWidget(self.save)
+        layout.addWidget(save_bar)
+
         sharing = self.section(layout, "回答与资料授权")
         row = QHBoxLayout()
         row.addWidget(self.auto_answer, 1)
@@ -110,7 +117,6 @@ class PersonalPane(QWidget):
         actions.addWidget(self.revoke)
         actions.addWidget(self.share)
         sharing.addLayout(actions)
-        layout.addWidget(self.status)
 
         self.import_button.clicked.connect(self.choose_resume)
         self.clear_resume.clicked.connect(self.resume.clear)
@@ -119,7 +125,7 @@ class PersonalPane(QWidget):
         self.revoke.clicked.connect(self.revoked.emit)
         self.facts.clicked.connect(open_facts)
         for widget in (self.background, self.resume, self.company, self.role, self.scenario):
-            widget.textChanged.connect(self.update_controls)
+            widget.textChanged.connect(self.form_changed)
         self.share_background.toggled.connect(self.update_controls)
         self.share_scenario.toggled.connect(self.update_controls)
         self.run_io(lambda: PersonalStore().load(), self.load_info, "正在读取本机资料…")
@@ -204,6 +210,8 @@ class PersonalPane(QWidget):
         self.status.setText("已提取简历文字。请检查内容并保存到本机。")
 
     def save_info(self):
+        if not self.save.isEnabled():
+            return
         info = self.current()
         for label, value, limit in (
             ("自我介绍", info.background, MAX_BACKGROUND), ("简历文本", info.resume, MAX_RESUME),
@@ -225,6 +233,11 @@ class PersonalPane(QWidget):
             self.revoked.emit()
         self.saved = info
         self.status.setText("已保存到本机。")
+
+    def form_changed(self):
+        self.update_controls()
+        if self.loaded and self.worker is None:
+            self.status.setText("有未保存的修改。" if self.save.isEnabled() else "资料已保存到本机。")
 
     def authorize(self):
         if not self.share.isEnabled():
