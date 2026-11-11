@@ -286,3 +286,12 @@ class LiveWorker(QThread):
         else:
             record(LogEvent.ANSWER_READY, monotonic() - started)
             self.answer.emit(row_id, answer, "建议已生成", scoped)
+            if not allowed():
+                return
+            try:
+                annotated = await self.interview.annotate_answer(answer)
+            except Exception:
+                record(LogEvent.API_ERROR)
+                return
+            if allowed() and annotated.annotations:
+                self.answer.emit(row_id, annotated, "建议已生成", scoped)

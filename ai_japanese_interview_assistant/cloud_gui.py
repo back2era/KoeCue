@@ -18,6 +18,7 @@ from .interview import Answer
 from .live import ANSWER_PENDING, LiveWorker
 from .personal import PersonalInfo
 from .profile_gui import PrivateIO, ProfileDialog
+from .ruby_label import RubyLabel
 from .settings import Preferences, load_preferences, save_preferences
 
 
@@ -171,10 +172,9 @@ class CloudPane(QWidget):
         self.live_caption.setAccessibleName("正在识别的日语")
         self.original_state = plain_label("", "captionState")
         self.translation_state = plain_label("", "captionState")
-        self.answer_ja = plain_label("", "answerText")
+        self.answer_ja = RubyLabel()
         self.answer_zh = plain_label("", "answerTranslation")
-        for label in (self.answer_ja, self.answer_zh):
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.answer_zh.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.answer_status = plain_label("", "muted")
         self.listening_badge = plain_label("", "listeningBadge")
         self.listening_badge.setWordWrap(False)
@@ -866,7 +866,10 @@ class CloudPane(QWidget):
         answer = row.answer if row else None
         placeholder = ("每段发言识别完成后会自动生成日语回应建议。" if self.auto_answer.isChecked()
                        else "选中字幕后可生成日语参考回答。")
-        self.answer_ja.setText(answer.ja if answer else placeholder)
+        if answer:
+            self.answer_ja.set_answer(answer.ja, answer.annotations)
+        else:
+            self.answer_ja.set_answer(placeholder)
         self.answer_zh.setText(answer.zh if answer else "")
         self.answer_zh.setVisible(bool(answer and answer.zh))
         answer_status = row.answer_status if row else ""

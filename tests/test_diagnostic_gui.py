@@ -218,13 +218,16 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
 
     import httpx
     from ai_japanese_interview_assistant import live
+    from ai_japanese_interview_assistant.answer_format import RubyAnnotation
     from ai_japanese_interview_assistant.config import DEEPSEEK
+    from ai_japanese_interview_assistant.interview import Answer
 
     async def exercise():
         finished = asyncio.Event()
         translations = []
         answers = []
         statement = "次に、担当業務についてご説明します。"
+        answer_text = "はい、よろしくお願いします。"
 
         def handle(request):
             assert str(request.url) == DEEPSEEK.url
@@ -239,10 +242,14 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
             name = payload["text"]["format"]["name"]
             if name == "draft":
                 assert json.loads(payload["input"]) == {"question": statement, "facts": []}
+                assert "JLPT N1" in payload["instructions"]
+            elif name == "annotate_answer":
+                assert payload["input"] == answer_text
             structured = {
-                "draft": {"before_ja": "はい、よろしくお願いします。", "before_zh": "好的，请您介绍。",
+                "draft": {"before_ja": answer_text, "before_zh": "好的，请您介绍。",
                           "after_ja": "", "after_zh": "", "fact_ids": []},
                 "verify_answer": {"safe": True},
+                "annotate_answer": {"terms": ["願"], "labels": ["ねが"], "contexts": [""]},
             }[name]
             return httpx.Response(200, json={"status": "completed", "output": [{
                 "type": "message",
@@ -264,26 +271,31 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
         def on_translation(row_id, text, state):
             if state == "已翻译":
                 translations.append(text)
-                if answers:
+                if answers and answers[-1][1].annotations:
                     finished.set()
 
         def on_answer(row_id, answer, state, scoped):
             if answer is not None:
-                answers.append((row_id, answer.ja, answer.zh))
-                if translations:
+                answers.append((row_id, answer))
+                if translations and answer.annotations:
                     finished.set()
 
         monkeypatch.setattr(live, "client_for", client_for)
         monkeypatch.setattr(live, "load_decoder", lambda: lambda pcm: statement)
         monkeypatch.setattr(live, "run_transcription", no_openai)
         monkeypatch.setattr(live, "record", lambda *args: None)
-        worker = live.LiveWorker(1, None, "test-deepseek", provider=DEEPSEEK, auto_answer=True)
+        worker = live.LiveWorker(1, None, "test-deepseek", provider=DEEPSEEK, auto_answer=True, answer_level="N1")
         monkeypatch.setattr(worker, "audio_commands", frames)
         worker.translation.connect(on_translation)
         worker.answer.connect(on_answer)
         await asyncio.wait_for(worker._main(), 3)
         assert translations == ["接下来我会介绍岗位职责。"]
-        assert answers == [((0, 1, "local-1"), "はい、よろしくお願いします。", "好的，请您介绍。")]
+        row_id = (0, 1, "local-1")
+        offset = answer_text.index("願")
+        assert answers == [
+            (row_id, Answer(answer_text, "好的，请您介绍。")),
+            (row_id, Answer(answer_text, "好的，请您介绍。", (RubyAnnotation(offset, offset + 1, "ねが"),))),
+        ]
 
     asyncio.run(exercise())
 

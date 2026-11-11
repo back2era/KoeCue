@@ -66,6 +66,9 @@ def test_automatic_suggestion_waits_for_capacity_and_runs_without_clicking(monke
                 assert automatic
                 return completed
 
+            async def annotate_answer(self, answer):
+                return answer
+
         async def occupying_job():
             await release.wait()
 
@@ -89,5 +92,49 @@ def test_automatic_suggestion_waits_for_capacity_and_runs_without_clicking(monke
         release.set()
         await asyncio.wait_for(answered.wait(), 1)
         assert [item[1] for item in received if item[1]] == [completed]
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("annotation_fails", [False, True])
+def test_answer_arrives_before_ruby_and_receives_the_current_difficulty(monkeypatch, annotation_fails):
+    from ai_japanese_interview_assistant import live
+    from ai_japanese_interview_assistant.answer_format import RubyAnnotation
+
+    async def exercise():
+        levels = []
+        events = []
+        annotating = asyncio.Event()
+        release = asyncio.Event()
+        plain = Answer("実装します。", "我会实现。")
+        enriched = Answer(plain.ja, plain.zh, (RubyAnnotation(0, 2, "じっそう"),))
+
+        class Replies:
+            async def suggest(self, text, *, level, **kwargs):
+                levels.append(level)
+                return plain
+
+            async def annotate_answer(self, answer):
+                assert answer == plain
+                annotating.set()
+                await release.wait()
+                if annotation_fails:
+                    raise TimeoutError
+                return enriched
+
+        monkeypatch.setattr(live, "record", lambda *args: None)
+        worker = LiveWorker(1, None, "test", answer_level="N2")
+        worker.answer_level = "N1"
+        worker.interview = Replies()
+        worker.answer.connect(lambda key, answer, state, scoped: events.append(answer) if answer else None)
+        row_id = (0, 1, "reading")
+        worker.start_answer(row_id, "どうしますか。", automatic=True)
+        task = worker.jobs[("answer", row_id)]
+        await asyncio.wait_for(annotating.wait(), 1)
+        assert levels == ["N1"]
+        assert events == [plain]
+        release.set()
+        await asyncio.wait_for(task, 1)
+        assert events == ([plain] if annotation_fails else [plain, enriched])
 
     asyncio.run(exercise())
