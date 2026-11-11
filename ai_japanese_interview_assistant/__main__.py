@@ -11,7 +11,9 @@ from PySide6.QtWidgets import (
 
 from .cloud_gui import CloudPane
 from .diagnostic import DiagnosticPane
-from .glass import DEFAULT_THEME, BrandMark, GlassCanvas, GlassStyle, PageFade, apply_theme, glass_panel, plain_label
+from .glass import (
+    DEFAULT_THEME, BrandMark, GlassCanvas, GlassStyle, PageFade, application_icon, apply_theme, glass_panel, plain_label,
+)
 from .personal_gui import PersonalPane
 
 
@@ -107,6 +109,7 @@ class MainWindow(QMainWindow):
 
 
 def configure_application(app):
+    app.setWindowIcon(application_icon())
     app.setStyle(GlassStyle())
     fonts = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "Fonts"
     for family, file in (("Microsoft YaHei UI", "msyh.ttc"), ("Yu Gothic UI", "YuGothM.ttc")):

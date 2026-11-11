@@ -148,6 +148,30 @@ def test_glass_layout_keeps_history_visible_and_settings_in_sync():
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_application_waveform_icon_reaches_main_window_and_settings():
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant.__main__ import MainWindow, configure_application
+
+    app = QApplication.instance() or QApplication([])
+    configure_application(app)
+    window = MainWindow()
+    window.show()
+    try:
+        icon = app.windowIcon()
+        assert not icon.isNull()
+        assert window.windowIcon().cacheKey() == icon.cacheKey()
+        assert window.cloud.settings.windowIcon().cacheKey() == icon.cacheKey()
+        assert {size.width() for size in icon.availableSizes()} >= {16, 32, 48, 256}
+        image = icon.pixmap(48, 48).toImage()
+        assert image.pixelColor(0, 0).alpha() == 0
+        assert image.pixelColor(24, 24).lightness() > 220
+    finally:
+        window.close()
+        wait_until(app, lambda: not window.isVisible())
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
 def test_selected_theme_is_restored_after_restart():
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PySide6.QtWidgets import QApplication

@@ -2,7 +2,7 @@
 from string import Template
 
 from PySide6.QtCore import QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPalette, QPen, QPixmap, QRadialGradient
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFrame, QGraphicsBlurEffect, QGraphicsOpacityEffect,
     QGraphicsScene, QLabel, QProxyStyle, QStyle, QVBoxLayout, QWidget,
@@ -336,6 +336,32 @@ def plain_label(text, name):
     return label
 
 
+def _paint_waveform_mark(painter, edge, fill, wave):
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(edge)
+    painter.setBrush(fill)
+    painter.drawRoundedRect(QRectF(0.5, 0.5, 37, 37), 12, 12)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(wave)
+    for index, height in enumerate((8, 15, 21, 12, 6)):
+        painter.drawRoundedRect(QRectF(9 + index * 4.5, (38 - height) / 2, 2.5, height), 1.25, 1.25)
+
+
+def application_icon():
+    """Draw the waveform at native window-icon sizes with transparent corners."""
+    icon = QIcon()
+    edge, fill, wave = QColor("#909096"), QColor("#5d5e63"), QColor("#f5f5f7")
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.scale(size / 38, size / 38)
+        _paint_waveform_mark(painter, edge, fill, wave)
+        painter.end()
+        icon.addPixmap(pixmap)
+    return icon
+
+
 class BrandMark(QWidget):
     def __init__(self):
         super().__init__()
@@ -344,18 +370,11 @@ class BrandMark(QWidget):
     def paintEvent(self, event):
         theme = _active_theme()
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         edge = QColor(theme.border_tint)
         edge.setAlpha(112)
         fill = QColor(theme.action_bottom)
         fill.setAlpha(131)
-        painter.setPen(edge)
-        painter.setBrush(fill)
-        painter.drawRoundedRect(QRectF(0.5, 0.5, 37, 37), 12, 12)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(theme.text))
-        for index, height in enumerate((8, 15, 21, 12, 6)):
-            painter.drawRoundedRect(QRectF(9 + index * 4.5, (38 - height) / 2, 2.5, height), 1.25, 1.25)
+        _paint_waveform_mark(painter, edge, fill, QColor(theme.text))
 
 
 class PageFade:
