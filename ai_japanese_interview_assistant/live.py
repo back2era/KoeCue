@@ -1,5 +1,6 @@
 """Qt worker coordinating live audio, speech recognition, and text jobs."""
 import asyncio
+from functools import partial
 from threading import Event
 from time import monotonic
 
@@ -13,7 +14,7 @@ from .local_asr import LocalAsrError, load_decoder, run_local_transcription
 from .personal import PersonalInfo
 from .services import TextService, client_for, error_message
 from .telemetry import Event as LogEvent, record
-from .transcription import AudioProcessor, RealtimeError, TranscriptBook, run_transcription
+from .transcription import AudioProcessor, LOCAL_PREVIEW_EVENT, RealtimeError, TranscriptBook, run_transcription
 
 
 ANSWER_PENDING = "正在生成建议…"
@@ -133,7 +134,8 @@ class LiveWorker(QThread):
                         return
                     self.status.emit("asr", "本地转写已就绪，正在接收语音")
                     await run_local_transcription(
-                        decoder, self.audio_commands(), self.on_event, on_ending=self.stop_text_and_audio,
+                        decoder, self.audio_commands(), self.on_event,
+                        preview_decode=partial(decoder, preview=True), on_ending=self.stop_text_and_audio,
                     )
             finally:
                 self.stop_text_and_audio()
@@ -192,8 +194,10 @@ class LiveWorker(QThread):
         if part is None:
             return
         row_id = (self.session_id, self.generation, part.item_id)
-        if (kind == "conversation.item.input_audio_transcription.delta" and event.get("delta")
-                and part.item_id == self.book.latest_item_id):
+        is_preview = kind == LOCAL_PREVIEW_EVENT or (
+            kind == "conversation.item.input_audio_transcription.delta" and event.get("delta")
+        )
+        if is_preview and part.text and part.item_id == self.book.latest_item_id:
             self.partial_transcript.emit((row_id, part))
         if kind != "input_audio_buffer.committed" and (part.final or part.failed):
             self.transcript.emit((row_id, part))

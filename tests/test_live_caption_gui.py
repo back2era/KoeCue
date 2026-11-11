@@ -6,7 +6,7 @@ import pytest
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
-def test_provisional_captions_are_immediate_append_only_and_separate_from_history(monkeypatch, tmp_path):
+def test_provisional_captions_can_correct_words_without_changing_history(monkeypatch, tmp_path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     from PySide6.QtWidgets import QApplication
@@ -37,7 +37,7 @@ def test_provisional_captions_are_immediate_append_only_and_separate_from_histor
         cloud.add_partial_transcript((key, TranscriptPart("current", "日本ではたらく")))
         cloud.add_partial_transcript((key, TranscriptPart("current", "日本では働く")))
         cloud.add_partial_transcript(((3, 1, "stale"), TranscriptPart("stale", "古い文字")))
-        assert cloud.live_caption.text() == "日本ではたらく"
+        assert cloud.live_caption.text() == "日本では働く"
 
         cloud.add_transcript((key, TranscriptPart("current", "日本で働く理由", final=True)))
         cloud.render_history()

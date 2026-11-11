@@ -9,6 +9,9 @@ import json
 from .config import REALTIME_MODEL, REALTIME_URL
 
 
+LOCAL_PREVIEW_EVENT = "local.transcription.preview"
+
+
 class RealtimeError(Exception):
     """Safe error message without provider payloads."""
 
@@ -38,7 +41,8 @@ class TranscriptBook:
         kind = event.get("type", "")
         item = event.get("item_id")
         if not item or not (
-            kind == "input_audio_buffer.committed" or kind.startswith("conversation.item.input_audio_transcription.")
+            kind in ("input_audio_buffer.committed", LOCAL_PREVIEW_EVENT)
+            or kind.startswith("conversation.item.input_audio_transcription.")
         ):
             return None
 
@@ -57,6 +61,8 @@ class TranscriptBook:
         if part.final or part.failed:
             return None
         match kind.rsplit(".", 1)[-1]:
+            case "preview" if kind == LOCAL_PREVIEW_EVENT:
+                part = replace(part, text=event["transcript"])
             case "delta":
                 part = replace(part, text=part.text + event.get("delta", ""))
             case "completed":

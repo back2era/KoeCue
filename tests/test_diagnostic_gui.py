@@ -224,8 +224,10 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
 
     async def exercise():
         finished = asyncio.Event()
+        preview_ready = asyncio.Event()
         translations = []
         answers = []
+        previews = []
         statement = "次に、担当業務についてご説明します。"
         answer_text = "はい、よろしくお願いします。"
 
@@ -264,9 +266,15 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
             pytest.fail("DeepSeek must not contact OpenAI Realtime")
 
         async def frames():
-            yield b"fixture-pcm"
+            yield b"\x01\x00" * 48000
+            await asyncio.wait_for(preview_ready.wait(), 2)
+            assert not translations and not answers
             yield None
             await finished.wait()
+
+        def on_preview(data):
+            previews.append(data[1].text)
+            preview_ready.set()
 
         def on_translation(row_id, text, state):
             if state == "已翻译":
@@ -281,14 +289,16 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
                     finished.set()
 
         monkeypatch.setattr(live, "client_for", client_for)
-        monkeypatch.setattr(live, "load_decoder", lambda: lambda pcm: statement)
+        monkeypatch.setattr(live, "load_decoder", lambda: lambda pcm, *, preview=False: "次に担当" if preview else statement)
         monkeypatch.setattr(live, "run_transcription", no_openai)
         monkeypatch.setattr(live, "record", lambda *args: None)
         worker = live.LiveWorker(1, None, "test-deepseek", provider=DEEPSEEK, auto_answer=True, answer_level="N1")
         monkeypatch.setattr(worker, "audio_commands", frames)
+        worker.partial_transcript.connect(on_preview)
         worker.translation.connect(on_translation)
         worker.answer.connect(on_answer)
         await asyncio.wait_for(worker._main(), 3)
+        assert previews == ["次に担当"]
         assert translations == ["接下来我会介绍岗位职责。"]
         row_id = (0, 1, "local-1")
         offset = answer_text.index("願")

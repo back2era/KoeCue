@@ -92,7 +92,7 @@ def test_live_partial_grows_before_commit_and_final_uses_all_audio(final_text):
 
         await run_local_transcription(results.__getitem__, frames(), on_event)
         assert [event["type"].rsplit(".", 1)[-1] for event in events] == [
-            "delta", "delta", "committed", "completed",
+            "preview", "preview", "committed", "completed",
         ]
         assert len({event["item_id"] for event in events}) == 1
         assert book.parts[0].final
@@ -101,11 +101,13 @@ def test_live_partial_grows_before_commit_and_final_uses_all_audio(final_text):
     asyncio.run(exercise())
 
 
-def test_partial_can_extend_after_an_earlier_spelling_changes():
+def test_partial_can_correct_earlier_words_as_more_audio_arrives():
     async def exercise():
         first = b"\x01\x00" * 48000
         continuation = b"\x02\x00" * 48000
-        hypotheses = {first: "最も難しかった課題と", first + continuation: "もっとも難しかった課題とそれを"}
+        corrected = "自分の長所と短所は何ですか"
+        hypotheses = {first: "自分の調子と対象", first + continuation: corrected}
+        finals = {first + continuation: corrected + "？"}
         arrived = asyncio.Event()
         book = TranscriptBook()
 
@@ -119,11 +121,12 @@ def test_partial_can_extend_after_an_earlier_spelling_changes():
             arrived.clear()
             yield continuation
             await asyncio.wait_for(arrived.wait(), 2)
-            assert book.parts[0].text == "最も難しかった課題とそれを"
+            assert book.parts[0].text == corrected
+            assert not book.parts[0].final
             yield None
 
-        await run_local_transcription(hypotheses.__getitem__, frames(), on_event)
-        assert book.parts[0].text == "もっとも難しかった課題とそれを"
+        await run_local_transcription(finals.__getitem__, frames(), on_event, preview_decode=hypotheses.__getitem__)
+        assert book.parts[0].text == corrected + "？"
         assert book.parts[0].final
 
     asyncio.run(exercise())
@@ -153,7 +156,7 @@ def test_commit_supersedes_inflight_partial_and_prioritizes_whole_turn():
 
         def on_event(event):
             events.append(event)
-            if event["type"].endswith(".delta"):
+            if event["type"].endswith(".preview"):
                 published.set()
 
         async def frames():
@@ -174,10 +177,10 @@ def test_commit_supersedes_inflight_partial_and_prioritizes_whole_turn():
             release.set()
         await asyncio.wait_for(task, 3)
         assert calls == [first, first + tail, next_turn, next_turn]
-        assert [(event["item_id"], event["delta"]) for event in events if "delta" in event] == [
+        assert [(event["item_id"], event["transcript"]) for event in events if event["type"].endswith(".preview")] == [
             ("local-2", "次の質問"),
         ]
-        assert [event["transcript"] for event in events if "transcript" in event] == [
+        assert [event["transcript"] for event in events if event["type"].endswith(".completed")] == [
             "最初の質問。", "次の質問",
         ]
 

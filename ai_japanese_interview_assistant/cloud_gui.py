@@ -609,7 +609,7 @@ class CloudPane(QWidget):
             return
         if key != self.preview_key:
             self.preview_key, self.preview_text = key, ""
-        if part.text.startswith(self.preview_text) and part.text != self.preview_text:
+        if part.text != self.preview_text:
             self.preview_text = part.text
             self.live_caption.setText(part.text if len(part.text) <= 84 else "…" + part.text[-84:])
             self.preview_card.show()

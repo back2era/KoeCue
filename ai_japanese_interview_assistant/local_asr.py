@@ -7,12 +7,14 @@ import os
 
 from .audio import AudioError
 from .profiles import app_directory
+from .transcription import LOCAL_PREVIEW_EVENT
 
 MODEL_REPO = "Systran/faster-whisper-base"
 MODEL_REVISION = "a80717a3a48b1b28aa687bca146cb7301feae1b1"
 MODEL_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
 PREVIEW_STRIDE = 57600  # 1.2 seconds of 24 kHz PCM16 mono
 MAX_QUEUED_TURNS = 2
+INTERVIEW_HOTWORDS = "自己紹介、志望動機、長所、短所、強み、弱み、職務経験、担当業務、入社後、チーム開発"
 
 
 class LocalAsrError(Exception):
@@ -42,37 +44,22 @@ def load_decoder():
     except (RuntimeError, ValueError, OSError) as exc:
         raise LocalAsrError("无法加载本地日语模型。请按 README 检查安装。") from exc
 
-    def decode(pcm):
+    def decode(pcm, *, preview=False):
         samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
         samples = soxr.resample(samples, 24000, 16000)
-        segments, _ = model.transcribe(samples, language="ja", beam_size=1, temperature=0.0,
-                                       condition_on_previous_text=False, without_timestamps=True)
+        segments, _ = model.transcribe(
+            samples, language="ja", beam_size=1 if preview else 3, temperature=0.0,
+            condition_on_previous_text=False, without_timestamps=True,
+            hotwords=None if preview else INTERVIEW_HOTWORDS,
+        )
         return "".join(segment.text for segment in segments).strip()
 
     return decode
 
 
-def _preview_suffix(previous, current):
-    boundary = len(previous)
-    if current.startswith(previous):
-        return current[boundary:]
-
-    # Japanese hypotheses can change an earlier spelling while keeping the spoken
-    # text at the boundary. Append only if a nearby six-character match is unambiguous.
-    anchor_length = 6
-    if boundary < anchor_length:
-        return ""
-    anchor = previous[-anchor_length:]
-    start = max(0, boundary - anchor_length - 4)
-    stop = boundary + 4
-    match = current.find(anchor, start, stop)
-    if match < 0 or current.find(anchor, match + 1, stop) >= 0:
-        return ""
-    return current[match + anchor_length:]
-
-
-async def run_local_transcription(decode, frames, on_event, *, on_ending=lambda: None):
+async def run_local_transcription(decode, frames, on_event, *, preview_decode=None, on_ending=lambda: None):
     """Collect audio independently and prioritize committed turns on one decoder lane."""
+    preview_decode = decode if preview_decode is None else preview_decode
     turns = deque()
     available = asyncio.Event()
     pending = bytearray()
@@ -136,15 +123,14 @@ async def run_local_transcription(decode, frames, on_event, *, on_ending=lambda:
                 turn = sequence
                 pcm = bytes(pending)
                 preview_at = len(pcm) + PREVIEW_STRIDE
-                text = await asyncio.to_thread(decode, pcm)
+                text = await asyncio.to_thread(preview_decode, pcm)
                 if ending or input_finished or turn != sequence:
                     continue
                 # Whisper often inserts terminal punctuation while the speaker is still talking.
                 text = text.rstrip("。！？、…,.!? \t")
-                if delta := _preview_suffix(accepted_preview, text):
+                if text and text != accepted_preview:
                     accepted_preview = text
-                    on_event({"type": "conversation.item.input_audio_transcription.delta", "item_id": f"local-{turn}",
-                              "delta": delta})
+                    on_event({"type": LOCAL_PREVIEW_EVENT, "item_id": f"local-{turn}", "transcript": text})
             else:
                 available.clear()
                 await available.wait()
