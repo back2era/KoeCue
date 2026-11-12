@@ -4,7 +4,7 @@ Windows 11 x64 桌面应用。面向日语模拟面试和已获授权的线上�
 
 | 状态 | 内容 |
 | --- | --- |
-| 已完成 | 五套可切换的玻璃主题、简历导入与面试场景、逐字显示的日中字幕、常驻对话历史、OpenAI / DeepSeek / Anthropic 选择、本地日语转写、离线测试及真实 WASAPI 设备枚举 |
+| 已完成 | 五套可切换的玻璃主题、简历导入与面试场景、逐字显示的日中字幕、常驻对话历史、八家文本 API 的设置和协议适配、本地日语转写、离线测试及真实 WASAPI 设备枚举 |
 | 进行中 | 实际会议采样、服务商真实 API、30 分钟联调和延迟验收 |
 | 未实现 | 按应用独立采集留待后续版本 |
 
@@ -24,13 +24,20 @@ Windows 任务栏会使用应用自己的波形图标。升级后请关闭旧窗
 
 ## 选择服务商
 
-| 服务商 | 日语语音转写 | 中文翻译与回答 |
-| --- | --- | --- |
-| OpenAI | OpenAI Realtime，实时接收日语增量 | OpenAI `gpt-6-luna` |
-| DeepSeek | 本机 Whisper，说话时逐批显示日语 | DeepSeek `deepseek-flash` |
-| Anthropic | 本机 Whisper，说话时逐批显示日语 | Claude `claude-haiku-5-5` |
+| 服务商 | 默认文本模型 | 可用的环境变量 | API 文档 |
+| --- | --- | --- | --- |
+| OpenAI | `gpt-6-luna` | `OPENAI_API_KEY` | [模型目录](https://developers.openai.com/api/docs/models) |
+| DeepSeek | `deepseek-flash` | `DEEPSEEK_API_KEY` | [Responses API](https://api-docs.deepseek.com/guides/responses_api/) |
+| Anthropic | `claude-haiku-5-5` | `ANTHROPIC_API_KEY` | [Messages API](https://platform.claude.com/docs/en/api/messages/create) |
+| 千问 · 阿里云百炼 | `qwen3.8-flash` | `DASHSCOPE_API_KEY` | [百炼 Chat Completions](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope) |
+| Kimi · 月之暗面 | `kimi-k3.1-pro` | `MOONSHOT_API_KEY` | [Kimi API](https://platform.kimi.com/docs/api/chat) |
+| GLM · 智谱 | `glm-5.3` | `ZHIPUAI_API_KEY` | [智谱开放平台](https://docs.bigmodel.cn/cn/guide/start/quick-start) |
+| MiniMax | `MiniMax-M3.1-Flash` | `MINIMAX_API_KEY` | [MiniMax 开放平台](https://platform.minimax.cn/docs/api-reference/text-openai-api) |
+| Google Gemini | `gemini-3.8-flash` | `GEMINI_API_KEY` | [Gemini API](https://aistudio.google.com/docs/openai) · [支持地区](https://ai.google.dev/gemini-api/docs/available-regions) |
 
-**只有 DeepSeek Key 时**，在项目目录执行一次下列命令。Anthropic 使用相同的本地语音组件。多语言 Whisper base 模型约 148 MB，下载完成后在 CPU 上运行。 [Whisper 模型](https://huggingface.co/Systran/faster-whisper-base/tree/a80717a3a48b1b28aa687bca146cb7301feae1b1)
+在「实时面试 → 设置 → API 服务」选择服务商，填写自己的 API Key，然后从「文本模型」下拉框选择或直接输入模型 ID。例如 OpenAI 可选 `gpt-6.1-terra` 或 `gpt-6.1-sol`。翻译、建议生成和核验共用所选文本模型。「刷新模型」可从 OpenAI、DeepSeek、Anthropic、Kimi 和 Gemini 拉取列表。「测试连接」只发送固定日语短句并检查流式译文，无需音源或本地语音模型。模型可用性取决于账户权限。千问使用中国内地百炼 Key，可选填北京业务空间 ID。
+
+**使用 OpenAI 时**，语音走 OpenAI Realtime。**选择其他服务商时**，语音由同一份本机 Whisper 模型转写，只需要当前服务商的 Key。首次使用本地转写时执行下列命令一次。多语言 Whisper base 模型约 148 MB，下载完成后在 CPU 上运行。 [Whisper 模型](https://huggingface.co/Systran/faster-whisper-base/tree/a80717a3a48b1b28aa687bca146cb7301feae1b1)
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-local.txt
@@ -38,7 +45,7 @@ Windows 任务栏会使用应用自己的波形图标。升级后请关闭旧窗
 .\.venv\Scripts\python.exe -m ai_japanese_interview_assistant
 ```
 
-在「实时面试」页点「设置」，选 **DeepSeek**，输入或读取自己的 DeepSeek Key，选择音源，确认同意后点击「开始本地转写」。音频留在本机，日语转写和单独授权的相关资料发给所选服务商。本地识别速度取决于电脑性能。 [DeepSeek Responses API](https://api-docs.deepseek.com/guides/responses_api/) · [Claude Messages API](https://platform.claude.com/docs/en/api/messages/create)
+在「设置」选择音源并确认采集同意，点击「开始本地转写」。本地转写时音频留在本机，日语转写和单独授权的相关资料发给所选文本服务商。本地识别速度取决于电脑性能。
 
 ## 本地音频诊断
 
@@ -84,7 +91,7 @@ Windows 任务栏会使用应用自己的波形图标。升级后请关闭旧窗
 
 分类样本为 30 条人工标注文本。命令使用真实 API 计算召回和误触发次数。回答的口述时长和目标难度需要人工检查。
 
-文本验收可以加 `--provider deepseek` 或 `--provider anthropic`，并设置对应的环境变量。此命令直接接收日语文字，无需安装本地语音模型。
+文本验收用 `--provider` 选择 `openai`、`deepseek`、`anthropic`、`qwen`、`kimi`、`glm`、`minimax` 或 `gemini`，并在当前进程设置对应的环境变量。可加 `--model` 指定模型 ID，千问可加 `--workspace` 指定北京业务空间。此命令直接接收日语文字，无需安装本地语音模型。
 
 ## 本地资料与凭据
 
@@ -96,7 +103,7 @@ Windows 任务栏会使用应用自己的波形图标。升级后请关闭旧窗
 
 已有安装升级后，如遇到 PDF 组件不可用，在项目目录运行 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`，然后重新启动。
 
-开始监听或正常关闭软件时，会保存当前的服务商、音源、自动回答开关和本次输入的 API Key。下次打开自动恢复这些设置。API Key 按服务商分别存入 Windows 凭据管理器，也可从「Windows 凭据」菜单删除。若上次的音源不可用或有同名设备，请在设置中重新选择。开发时也可以按所选服务商使用 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY` 或 `ANTHROPIC_API_KEY`。采集同意与资料分享授权每次会话重新确认。
+在设置中点击「完成」、开始监听或正常关闭软件时，会保存服务商、各家模型、音源、自动回答开关和当前输入的 API Key。下次打开自动恢复这些设置。API Key 按服务商分别存入 Windows 凭据管理器，也可从「Windows 凭据」菜单删除。若上次的音源不可用或有同名设备，请在设置中重新选择。采集同意与资料分享授权每次会话重新确认。
 
 音频和会话历史在应用中只保留于内存。`%LOCALAPPDATA%\AIJapaneseInterviewAssistant\assistant.log` 滚动保留固定事件名和耗时。OpenAI 文本请求使用 `store=false`，服务端保留规则取决于 API 账户与端点。 [OpenAI 数据控制](https://developers.openai.com/api/docs/guides/your-data)
 
@@ -105,7 +112,7 @@ Windows 任务栏会使用应用自己的波形图标。升级后请关闭旧窗
 | 项目 | 结果 |
 | --- | --- |
 | 干净运行时与锁定依赖 | Windows 11 x64、CPython 3.13.12，`pip check` 通过 |
-| 完整自动化套件 | 133 项通过，包括离屏 Qt、Windows Shell 任务栏、真实设备枚举、回答重点与标注视图、双语复制、实时字幕、历史保留和三家服务商协议替身 |
+| 完整自动化套件 | 157 项通过，包括离屏 Qt、Windows Shell 任务栏、真实设备枚举、字幕与历史、回答标注、模型设置恢复和八家服务商协议替身 |
 | 本地 Whisper | 用真实模型比较了两种合成日语音色。常见面试词汇提示让两段清晰的「自分の長所と短所は何ですか」正确识别出关键字「長所」「短所」。实际会议音质下的准确率待测。 |
 | 实际采集 | 待验证浏览器、Teams、Zoom、麦克风、USB/蓝牙切换及真机生命周期 |
 | 真实 API 与 30 分钟联调 | 待在有可用 Key 和已授权素材的环境验证，包括错误 Key、限流、断网、分类质量和回答时长 |

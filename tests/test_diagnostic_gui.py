@@ -498,6 +498,109 @@ def test_history_keeps_old_rows_and_scroll_position_when_a_new_segment_arrives(m
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_api_settings_restore_each_provider_model_without_saving_a_key(monkeypatch, tmp_path):
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant.__main__ import MainWindow
+    from ai_japanese_interview_assistant.diagnostic import DeviceScan
+    from ai_japanese_interview_assistant.settings import load_preferences
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(DeviceScan, "run", lambda self: self.result.emit([]))
+    app = QApplication.instance() or QApplication([])
+
+    def select(pane, provider):
+        pane.provider.setCurrentIndex(pane.provider.findData(provider))
+        wait_until(app, lambda: pane.key.isEnabled())
+
+    window = MainWindow()
+    window.show()
+    try:
+        pane = window.cloud
+        wait_until(app, lambda: pane.key.isEnabled())
+        assert pane.model.findText("gpt-6.1-terra") >= 0
+        pane.model.setCurrentText("gpt-6.1-terra")
+        select(pane, "qwen")
+        pane.model.setEditText("qwen-custom-test")
+        pane.workspace.setText("llm-example")
+        select(pane, "openai")
+        assert pane.model.currentText() == "gpt-6.1-terra"
+        select(pane, "qwen")
+        assert pane.model.currentText() == "qwen-custom-test"
+        QTest.keyClicks(pane.key, "synthetic-qwen-key")
+        pane.settings.accept()
+        wait_until(app, lambda: pane.settings_worker is None)
+        preferences = load_preferences()
+        assert preferences.provider == "qwen"
+        assert dict(preferences.model_choices) == {
+            "openai": "gpt-6.1-terra", "qwen": "qwen-custom-test",
+        }
+        assert preferences.qwen_workspace == "llm-example"
+        settings_file = tmp_path / "AIJapaneseInterviewAssistant" / "settings.ini"
+        assert "synthetic-qwen-key" not in settings_file.read_text(encoding="utf-8")
+    finally:
+        window.close()
+        wait_until(app, lambda: not window.isVisible())
+
+    restored = MainWindow()
+    restored.show()
+    try:
+        pane = restored.cloud
+        wait_until(app, lambda: pane.key.isEnabled())
+        assert pane.provider.currentData() == "qwen"
+        assert pane.model.currentText() == "qwen-custom-test"
+        assert pane.workspace.text() == "llm-example"
+        assert pane.key.text() == "synthetic-qwen-key"
+        assert not pane.consent.isChecked()
+    finally:
+        restored.close()
+        wait_until(app, lambda: not restored.isVisible())
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_api_actions_use_selected_model_without_starting_capture(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant import cloud_gui
+    from ai_japanese_interview_assistant.__main__ import MainWindow
+    from ai_japanese_interview_assistant.diagnostic import DeviceScan
+    from ai_japanese_interview_assistant.services import TextService
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(DeviceScan, "run", lambda self: self.result.emit([]))
+    app = QApplication.instance() or QApplication([])
+    calls = []
+
+    async def check(service):
+        calls.append(service.model)
+
+    async def list_models(service):
+        return ("gpt-6.1-terra-2026-10-20",)
+
+    monkeypatch.setattr(TextService, "check_connection", check)
+    monkeypatch.setattr(TextService, "list_models", list_models)
+    monkeypatch.setattr(cloud_gui, "credential", lambda *args: "")
+    window = MainWindow()
+    window.show()
+    try:
+        pane = window.cloud
+        wait_until(app, lambda: pane.key.isEnabled())
+        pane.model.setCurrentText("gpt-6.1-sol")
+        pane.key.setText("synthetic")
+        pane.model_refresh.click()
+        wait_until(app, lambda: pane.model_refresh.isEnabled())
+        assert pane.model.findText("gpt-6.1-terra-2026-10-20") >= 0
+        assert pane.model.currentText() == "gpt-6.1-sol"
+        pane.api_test.click()
+        wait_until(app, lambda: pane.api_test.isEnabled())
+        assert calls == ["gpt-6.1-sol"]
+        assert "通过" in pane.api_status.text()
+        assert pane.worker is None
+    finally:
+        window.close()
+        wait_until(app, lambda: not window.isVisible())
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
 def test_settings_restore_after_closing_with_a_renumbered_audio_device(monkeypatch, tmp_path):
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication

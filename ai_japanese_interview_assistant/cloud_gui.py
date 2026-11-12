@@ -1,6 +1,7 @@
 """Consent-gated live bilingual interview tab."""
 from dataclasses import dataclass
 from html import escape
+import asyncio
 import os
 
 from PySide6.QtCore import QPoint, QSignalBlocker, QTimer, Signal, Slot, Qt
@@ -12,14 +13,16 @@ from PySide6.QtWidgets import (
 from .answer_display import compact_annotations, paragraph_breaks
 from .answer_format import ANSWER_LEVELS, DEFAULT_ANSWER_LEVEL
 from .diagnostic import DeviceScan
-from .config import OPENAI, PROVIDERS
+from .config import OPENAI, PROVIDERS, QWEN
 from .credentials import credential
 from .glass import DEFAULT_THEME, THEMES, GlassComboBox, GlassDialog, glass_panel, plain_label
 from .interview import Answer
 from .live import ANSWER_PENDING, LiveWorker
 from .personal import PersonalInfo
 from .profile_gui import PrivateIO, ProfileDialog
+from .profiles import ProfileError
 from .ruby_label import RubyLabel
+from .services import TextService, client_for, error_message
 from .settings import Preferences, load_preferences, save_preferences
 
 
@@ -87,6 +90,7 @@ class CloudPane(QWidget):
         self.settings_worker = None
         self.preferences = Preferences()
         self.preferences_ready = False
+        self.model_choices = {}
         self.audio_selection = ("", False)
         self.vault_operation = ""
         self.vault_provider = None
@@ -125,6 +129,26 @@ class CloudPane(QWidget):
         self.provider.setAccessibleName("API 服务商")
         for code, provider in PROVIDERS.items():
             self.provider.addItem(provider.label, code)
+        self.model = GlassComboBox()
+        self.model.setAccessibleName("文本模型")
+        self.model.setEditable(True)
+        self.model.setInsertPolicy(self.model.InsertPolicy.NoInsert)
+        self.model.setSizeAdjustPolicy(self.model.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.model.setMinimumContentsLength(18)
+        self.model.lineEdit().setMaxLength(160)
+        self.model.lineEdit().setPlaceholderText("输入模型 ID")
+        self.set_model_options()
+        self.workspace = QLineEdit()
+        self.workspace.setAccessibleName("百炼北京工作空间 ID")
+        self.workspace.setPlaceholderText("百炼北京工作空间 ID（可选）")
+        self.workspace.setMaxLength(63)
+        self.workspace.hide()
+        self.model_refresh = QPushButton("刷新模型")
+        self.model_refresh.setToolTip("从服务商获取模型列表。也可以直接输入模型 ID。")
+        self.api_test = QPushButton("测试连接")
+        self.api_test.setToolTip("向所选模型发送固定日语短句，检查流式译文。")
+        self.api_status = plain_label("", "muted")
+        self.api_status.hide()
         self.key = QLineEdit()
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
         self.key.setPlaceholderText("API Key")
@@ -187,7 +211,7 @@ class CloudPane(QWidget):
         self.status_detail = plain_label("", "muted")
         self.settings_toggle = QPushButton("设置")
         self.settings_toggle.setCheckable(True)
-        self.settings_toggle.setToolTip("设置音源、服务商与 API Key")
+        self.settings_toggle.setToolTip("设置音源、服务商、模型与 API Key")
         self.latest = QPushButton("回到最新")
         self.start.setObjectName("primaryAction")
         self.build_layout()
@@ -201,9 +225,13 @@ class CloudPane(QWidget):
         self.theme.currentIndexChanged.connect(lambda: self.theme_changed.emit(self.theme.currentData()))
         self.answer_level.currentIndexChanged.connect(self.update_answer_level)
         self.provider.currentIndexChanged.connect(self.provider_changed)
+        self.model.currentTextChanged.connect(self.model_changed)
+        self.workspace.textChanged.connect(self.api_input_changed)
+        self.model_refresh.clicked.connect(lambda: self.run_api_action(refresh=True))
+        self.api_test.clicked.connect(lambda: self.run_api_action(refresh=False))
         self.consent.toggled.connect(self.controls)
         self.auto_answer.toggled.connect(self.select_row)
-        self.key.textChanged.connect(self.controls)
+        self.key.textChanged.connect(self.api_input_changed)
         self.start.clicked.connect(self.start_session)
         self.pause.clicked.connect(self.pause_session)
         self.stop.clicked.connect(self.stop_session)
@@ -215,6 +243,7 @@ class CloudPane(QWidget):
         self.history.itemClicked.connect(self.show_captions)
         self.settings_toggle.toggled.connect(self.toggle_settings)
         self.settings.finished.connect(lambda: self.settings_toggle.setChecked(False))
+        self.settings.accepted.connect(self.persist_preferences)
         self.latest.clicked.connect(self.select_latest)
         self.run_settings_io(load_preferences, self.restore_preferences)
         self.refresh_devices()
@@ -322,7 +351,7 @@ class CloudPane(QWidget):
 
     def build_settings(self):
         self.settings = GlassDialog("设置", self)
-        self.settings.resize(640, 458)
+        self.settings.resize(650, 535)
         options = glass_panel()
         option_layout = QVBoxLayout(options)
         option_layout.setContentsMargins(16, 12, 16, 12)
@@ -349,6 +378,14 @@ class CloudPane(QWidget):
         key_row.addWidget(self.key, 1)
         key_row.addWidget(self.vault_button)
         settings.addLayout(key_row)
+        settings.addWidget(self.workspace)
+        model_row = QHBoxLayout()
+        model_row.addWidget(plain_label("文本模型", "muted"))
+        model_row.addWidget(self.model, 1)
+        model_row.addWidget(self.model_refresh)
+        model_row.addWidget(self.api_test)
+        settings.addLayout(model_row)
+        settings.addWidget(self.api_status)
         self.settings.body.addWidget(card)
 
         self.settings.body.addWidget(self.consent)
@@ -456,11 +493,84 @@ class CloudPane(QWidget):
     def selected_provider(self):
         return PROVIDERS[self.provider.currentData()]
 
+    def selected_model(self):
+        return self.model.currentText().strip() or self.selected_provider().model
+
+    def set_model_options(self, additional=()):
+        code = self.provider.currentData()
+        provider = self.selected_provider()
+        selected = self.model_choices.get(code, provider.model)
+        models = list(dict.fromkeys((*provider.models, *additional, selected)))
+        with QSignalBlocker(self.model):
+            self.model.clear()
+            self.model.addItems(models)
+            self.model.setCurrentText(selected)
+
+    def model_changed(self, value):
+        code = self.provider.currentData()
+        value = value.strip()
+        if value and value != self.selected_provider().model:
+            self.model_choices[code] = value
+        else:
+            self.model_choices.pop(code, None)
+        self.api_input_changed()
+
+    def api_input_changed(self):
+        self.api_status.hide()
+        self.controls()
+
+    @Slot(str)
+    def show_api_status(self, message):
+        self.api_status.setText(message)
+        self.api_status.show()
+
+    def endpoint_valid(self):
+        try:
+            self.selected_provider().endpoint(self.workspace.text().strip())
+        except ValueError:
+            return False
+        return True
+
+    def run_api_action(self, *, refresh):
+        button = self.model_refresh if refresh else self.api_test
+        if not button.isEnabled():
+            return
+        provider, key = self.selected_provider(), self.api_key()
+        model, workspace = self.selected_model(), self.workspace.text().strip()
+
+        async def request():
+            async with client_for(key, provider) as client:
+                service = TextService(client, provider, model=model, workspace=workspace)
+                if refresh:
+                    return await service.list_models()
+                await service.check_connection()
+
+        def operation():
+            try:
+                return asyncio.run(request())
+            except Exception as exc:
+                raise ProfileError(error_message(exc)) from exc
+
+        self.show_api_status("正在读取模型…" if refresh else "正在测试文本 API…")
+        self.run_settings_io(operation, self.api_action_finished, self.show_api_status)
+
+    @Slot(object)
+    def api_action_finished(self, models):
+        if models is None:
+            self.show_api_status("连接测试通过，已收到完整译文。")
+        else:
+            self.set_model_options(models)
+            self.show_api_status(f"已刷新 {len(models)} 个文本模型。" if models
+                                 else "未发现可列出的文本模型。可继续手动输入模型 ID。")
+
     def provider_changed(self):
         if self.state != "idle":
             self.stop_session()
         provider = self.selected_provider()
         self.key.clear()
+        self.set_model_options()
+        self.workspace.setVisible(provider is QWEN)
+        self.api_status.hide()
         self.consent.setChecked(False)
         self.approved_facts = ()
         self.approved_personal = PersonalInfo()
@@ -482,7 +592,8 @@ class CloudPane(QWidget):
         configurable = idle and self.state != "paused"
         self.theme.setEnabled(self.preferences_ready and not self.closing)
         self.answer_level.setEnabled(self.preferences_ready and not self.closing)
-        for widget in (self.source, self.refresh, self.provider, self.key, self.vault_button, self.consent, self.auto_answer):
+        for widget in (self.source, self.refresh, self.provider, self.model, self.workspace, self.key,
+                       self.vault_button, self.consent, self.auto_answer):
             widget.setEnabled(configurable)
         profile_state = (
             configurable, self.approved_personal, len(self.approved_facts), self.selected_provider().label, self.state,
@@ -490,7 +601,12 @@ class CloudPane(QWidget):
         if profile_state != self.profile_snapshot:
             self.profile_snapshot = profile_state
             self.profile_changed.emit(*profile_state)
-        allowed = bool(self.consent.isChecked() and self.source.currentData() and self.api_key())
+        endpoint_valid = self.endpoint_valid()
+        self.workspace.setToolTip("" if endpoint_valid else "请输入有效的百炼北京工作空间 ID。")
+        api_ready = bool(configurable and self.api_key() and endpoint_valid)
+        self.api_test.setEnabled(api_ready)
+        self.model_refresh.setEnabled(api_ready and bool(self.selected_provider().models_url))
+        allowed = bool(self.consent.isChecked() and self.source.currentData() and self.api_key() and endpoint_valid)
         self.start.setEnabled(idle and allowed and self.capture_available)
         mode = "云端监听" if self.selected_provider() is OPENAI else "本地转写"
         self.start.setText(("恢复" if self.state == "paused" else "开始") + mode)
@@ -546,7 +662,8 @@ class CloudPane(QWidget):
         self.worker = LiveWorker(self.generation, self.source.currentData(), self.api_key(), self,
                                  session_id=self.session_id, auto_answer=self.auto_answer.isChecked(),
                                  facts=self.approved_facts, personal_info=self.approved_personal,
-                                 provider=self.selected_provider(), answer_level=self.answer_level.currentData())
+                                 provider=self.selected_provider(), answer_level=self.answer_level.currentData(),
+                                 model=self.selected_model(), workspace=self.workspace.text().strip())
         self.worker.status.connect(self.set_status)
         self.worker.partial_transcript.connect(self.add_partial_transcript)
         self.worker.transcript.connect(self.add_transcript)
@@ -757,10 +874,10 @@ class CloudPane(QWidget):
         self.controls()
         self.idle.emit()
 
-    def run_settings_io(self, operation, receive):
+    def run_settings_io(self, operation, receive, failed=None):
         self.settings_worker = PrivateIO(operation, self)
         self.settings_worker.result.connect(receive)
-        self.settings_worker.failed.connect(self.text_status.setText)
+        self.settings_worker.failed.connect(failed or self.text_status.setText)
         self.settings_worker.finished.connect(self.settings_finished)
         self.controls()
         self.settings_worker.start()
@@ -768,6 +885,8 @@ class CloudPane(QWidget):
     @Slot(object)
     def restore_preferences(self, preferences):
         self.preferences = preferences
+        self.model_choices = dict(preferences.model_choices)
+        self.workspace.setText(preferences.qwen_workspace)
         self.audio_selection = (preferences.audio_name, preferences.audio_loopback)
         with QSignalBlocker(self.provider):
             self.provider.setCurrentIndex(self.provider.findData(preferences.provider))
@@ -777,9 +896,13 @@ class CloudPane(QWidget):
         self.restore_audio_source()
 
     def persist_preferences(self):
+        if self.settings_worker is not None or self.credential_worker is not None:
+            return
         preferences = Preferences(
             self.provider.currentData(), *self.audio_selection, self.auto_answer.isChecked(), self.theme.currentData(),
             self.answer_level.currentData(),
+            tuple((code, self.model_choices[code]) for code in PROVIDERS if code in self.model_choices),
+            self.workspace.text().strip(),
         )
         changed = preferences != self.preferences
         key = self.key.text().strip() if self.key.isModified() else ""

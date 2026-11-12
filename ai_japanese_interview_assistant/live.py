@@ -31,13 +31,16 @@ class LiveWorker(QThread):
     answer = Signal(object, object, str, bool)
 
     def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False,
-                 facts=(), personal_info=PersonalInfo(), provider=OPENAI, answer_level=DEFAULT_ANSWER_LEVEL):
+                 facts=(), personal_info=PersonalInfo(), provider=OPENAI, answer_level=DEFAULT_ANSWER_LEVEL,
+                 model="", workspace=""):
         super().__init__(parent)
         self.generation = generation
         self.session_id = session_id
         self.device = device
         self.key = key
         self.provider = provider
+        self.model = model
+        self.workspace = workspace
         self.auto_answer = auto_answer
         self.answer_level = answer_level
         self.facts = facts
@@ -112,7 +115,7 @@ class LiveWorker(QThread):
         if self.isInterruptionRequested():
             return
         async with client_for(self.key, self.provider) as client:
-            self.service = TextService(client, self.provider)
+            self.service = TextService(client, self.provider, model=self.model, workspace=self.workspace)
             self.interview = InterviewService(self.service)
             started = monotonic()
             try:

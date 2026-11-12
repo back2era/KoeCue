@@ -13,7 +13,7 @@ from .services import TextService, client_for, error_message
 
 async def validate(args, key, provider):
     async with client_for(key, provider) as client:
-        text_service = TextService(client, provider)
+        text_service = TextService(client, provider, model=args.model, workspace=args.workspace)
         interview = InterviewService(text_service)
         if args.classification:
             examples = json.loads(Path(args.classification).read_text(encoding="utf-8"))
@@ -48,10 +48,16 @@ def main():
     inputs.add_argument("--question")
     inputs.add_argument("--classification", metavar="JSON")
     parser.add_argument("--provider", choices=PROVIDERS, default="openai")
+    parser.add_argument("--model", default="", help="Use this text model ID instead of the provider default.")
+    parser.add_argument("--workspace", default="", help="Optional Qwen Beijing workspace ID.")
     parser.add_argument("--send-authorized-text", action="store_true", required=True)
     parser.add_argument("--show-text", action="store_true")
     args = parser.parse_args()
     provider = PROVIDERS[args.provider]
+    try:
+        provider.endpoint(args.workspace)
+    except ValueError as exc:
+        parser.error(str(exc))
     key = os.environ.get(provider.key_env, "").strip()
     if not key:
         parser.error(f"Set {provider.key_env} in this process before running the live check.")

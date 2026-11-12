@@ -1,4 +1,4 @@
-# Optional dependencies for DeepSeek and Anthropic speech recognition.
+# Optional dependencies for on-device Whisper transcription.
 -r requirements.txt
 faster-whisper==1.2.1
 ctranslate2==4.7.1
