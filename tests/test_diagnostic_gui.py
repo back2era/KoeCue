@@ -66,14 +66,12 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "test-openai")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek")
         cloud.key.setText("temporary-openai")
-        cloud.consent.setChecked(True)
         cloud.provider.setCurrentIndex(cloud.provider.findData("deepseek"))
         wait_until(app, lambda: cloud.provider.isEnabled())
         assert cloud.key.text() == ""
         assert cloud.api_key() == "test-deepseek"
-        assert not cloud.consent.isChecked()
         assert cloud.auto_answer.isChecked()
-        assert "DeepSeek" in cloud.consent.text() and "音频在本机" in cloud.consent.text()
+        assert "DeepSeek" in cloud.capture_notice.text() and "音频在本机" in cloud.capture_notice.text()
         assert "本地" in cloud.start.text()
 
         cloud.session_id = 2
@@ -88,6 +86,59 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
         cloud.auto_answer.setChecked(False)
         cloud.provider.setCurrentIndex(cloud.provider.findData("openai"))
         assert not cloud.auto_answer.isChecked()
+    finally:
+        window.close()
+        wait_until(app, lambda: not window.isVisible())
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_live_start_is_ready_after_saving_settings_and_requires_an_explicit_click(monkeypatch):
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant.__main__ import MainWindow
+    from ai_japanese_interview_assistant.audio import Device
+    from ai_japanese_interview_assistant.diagnostic import DeviceScan
+    from ai_japanese_interview_assistant.live import LiveWorker
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    device = Device(10, "会议扬声器", True, 48000, 2)
+    monkeypatch.setattr(DeviceScan, "run", lambda self: self.result.emit([device]))
+    starts = []
+    monkeypatch.setattr(LiveWorker, "start", lambda self: starts.append((self.session_id, self.device)))
+    monkeypatch.setattr(LiveWorker, "stop", lambda self: self.finished.emit())
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    try:
+        pane = window.cloud
+        wait_until(app, lambda: pane.provider.isEnabled() and window.diagnostic.scan is None)
+        pane.provider.setCurrentIndex(pane.provider.findData("deepseek"))
+        wait_until(app, lambda: pane.key.isEnabled())
+        pane.settings_toggle.setChecked(True)
+        pane.source.setCurrentIndex(1)
+        QTest.keyClicks(pane.key, "synthetic-key")
+        pane.settings.accept()
+        wait_until(app, lambda: pane.settings_worker is None)
+        assert starts == []
+        assert pane.worker is None
+        assert pane.start.isEnabled()
+        assert pane.start.text() == "确认并开始本地转写"
+        assert pane.capture_notice.isVisible()
+        assert "音频在本机转写" in pane.capture_notice.text()
+        assert "DeepSeek" in pane.capture_notice.text()
+
+        pane.start.click()
+        wait_until(app, lambda: pane.settings_worker is None)
+        assert starts == [(1, device)]
+        assert pane.state == "active"
+        pane.pause.click()
+        assert pane.start.text() == "恢复本地转写"
+        assert not pane.capture_notice.isVisible()
+        pane.start.click()
+        assert starts == [(1, device), (1, device)]
+        pane.stop.click()
+        assert pane.capture_notice.isVisible()
+        assert pane.start.text() == "确认并开始本地转写"
     finally:
         window.close()
         wait_until(app, lambda: not window.isVisible())
@@ -551,7 +602,7 @@ def test_api_settings_restore_each_provider_model_without_saving_a_key(monkeypat
         assert pane.model.currentText() == "qwen-custom-test"
         assert pane.workspace.text() == "llm-example"
         assert pane.key.text() == "synthetic-qwen-key"
-        assert not pane.consent.isChecked()
+        assert pane.worker is None
     finally:
         restored.close()
         wait_until(app, lambda: not restored.isVisible())
@@ -626,7 +677,6 @@ def test_settings_restore_after_closing_with_a_renumbered_audio_device(monkeypat
         pane.source.setCurrentIndex(1)
         QTest.keyClicks(pane.key, "synthetic-key")
         pane.auto_answer.setChecked(False)
-        pane.consent.setChecked(True)
     finally:
         window.close()
         wait_until(app, lambda: not window.isVisible())
@@ -641,7 +691,6 @@ def test_settings_restore_after_closing_with_a_renumbered_audio_device(monkeypat
         assert pane.source.currentData().index == 21
         assert pane.key.text() == "synthetic-key"
         assert not pane.auto_answer.isChecked()
-        assert not pane.consent.isChecked()
         assert pane.worker is None
         settings = tmp_path / "AIJapaneseInterviewAssistant" / "settings.ini"
         assert "synthetic-key" not in settings.read_text(encoding="utf-8")

@@ -158,10 +158,9 @@ class CloudPane(QWidget):
         for action, operation in (("读取已保存的 Key", "read"), ("保存当前 Key", "save"), ("删除已保存的 Key", "delete")):
             vault_menu.addAction(action, lambda checked=False, op=operation: self.use_vault(op))
         self.vault_button.setMenu(vault_menu)
-        self.consent = QCheckBox()
         self.auto_answer = QCheckBox("自动为面试发言生成建议")
         self.auto_answer.setChecked(True)
-        self.start = QPushButton("开始云端监听")
+        self.start = QPushButton("确认并开始云端监听")
         self.pause = QPushButton("暂停")
         self.stop = QPushButton("停止")
         self.retry = QPushButton("重试所选翻译")
@@ -209,6 +208,9 @@ class CloudPane(QWidget):
         self.listening_badge.setWordWrap(False)
         self.input_summary = plain_label("", "muted")
         self.status_detail = plain_label("", "muted")
+        self.capture_notice = plain_label("", "captionState")
+        self.capture_notice.setAccessibleName("监听确认说明")
+        self.capture_notice.hide()
         self.settings_toggle = QPushButton("设置")
         self.settings_toggle.setCheckable(True)
         self.settings_toggle.setToolTip("设置音源、服务商、模型与 API Key")
@@ -229,7 +231,6 @@ class CloudPane(QWidget):
         self.workspace.textChanged.connect(self.api_input_changed)
         self.model_refresh.clicked.connect(lambda: self.run_api_action(refresh=True))
         self.api_test.clicked.connect(lambda: self.run_api_action(refresh=False))
-        self.consent.toggled.connect(self.controls)
         self.auto_answer.toggled.connect(self.select_row)
         self.key.textChanged.connect(self.api_input_changed)
         self.start.clicked.connect(self.start_session)
@@ -337,8 +338,12 @@ class CloudPane(QWidget):
         self.splitter.setStretchFactor(1, 2)
 
         bar = glass_panel("glassBar")
-        footer = QHBoxLayout(bar)
-        footer.setContentsMargins(16, 11, 13, 11)
+        bar_layout = QVBoxLayout(bar)
+        bar_layout.setContentsMargins(16, 11, 13, 11)
+        bar_layout.setSpacing(8)
+        bar_layout.addWidget(self.capture_notice)
+        footer = QHBoxLayout()
+        bar_layout.addLayout(footer)
         info = QVBoxLayout()
         info.setSpacing(3)
         info.addWidget(self.input_summary)
@@ -388,7 +393,6 @@ class CloudPane(QWidget):
         settings.addWidget(self.api_status)
         self.settings.body.addWidget(card)
 
-        self.settings.body.addWidget(self.consent)
         self.settings.body.addStretch()
         done = QPushButton("完成")
         done.setObjectName("primaryAction")
@@ -448,13 +452,11 @@ class CloudPane(QWidget):
     def source_changed(self):
         device = self.source.currentData()
         self.audio_selection = (device.name, device.loopback) if device else ("", False)
-        self.consent.setChecked(False)
         self.controls()
 
     def refresh_devices(self):
         with QSignalBlocker(self.source):
             self.source.clear()
-        self.consent.setChecked(False)
         self.scan = DeviceScan(self)
         self.scan.result.connect(self.set_devices)
         self.scan.failed.connect(self.asr_status.setText)
@@ -571,15 +573,9 @@ class CloudPane(QWidget):
         self.set_model_options()
         self.workspace.setVisible(provider is QWEN)
         self.api_status.hide()
-        self.consent.setChecked(False)
         self.approved_facts = ()
         self.approved_personal = PersonalInfo()
         self.key.setPlaceholderText(f"{provider.label} API Key")
-        self.consent.setText(
-            "已取得必要同意，允许将所选来源的音频及转写发送至 OpenAI"
-            if provider is OPENAI else
-            f"已取得必要同意。音频在本机转写，日语文字及单独授权的资料可发送至 {provider.label}"
-        )
         self.asr_status.setText("转写未连接" if provider is OPENAI else "本地日语转写未启动")
         self.text_status.setText(f"{provider.label} 文本 API 未连接")
         if self.preferences_ready and not self.closing:
@@ -593,7 +589,7 @@ class CloudPane(QWidget):
         self.theme.setEnabled(self.preferences_ready and not self.closing)
         self.answer_level.setEnabled(self.preferences_ready and not self.closing)
         for widget in (self.source, self.refresh, self.provider, self.model, self.workspace, self.key,
-                       self.vault_button, self.consent, self.auto_answer):
+                       self.vault_button, self.auto_answer):
             widget.setEnabled(configurable)
         profile_state = (
             configurable, self.approved_personal, len(self.approved_facts), self.selected_provider().label, self.state,
@@ -606,10 +602,18 @@ class CloudPane(QWidget):
         api_ready = bool(configurable and self.api_key() and endpoint_valid)
         self.api_test.setEnabled(api_ready)
         self.model_refresh.setEnabled(api_ready and bool(self.selected_provider().models_url))
-        allowed = bool(self.consent.isChecked() and self.source.currentData() and self.api_key() and endpoint_valid)
-        self.start.setEnabled(idle and allowed and self.capture_available)
-        mode = "云端监听" if self.selected_provider() is OPENAI else "本地转写"
-        self.start.setText(("恢复" if self.state == "paused" else "开始") + mode)
+        ready = bool(self.source.currentData() and self.api_key() and endpoint_valid)
+        can_start = idle and ready and self.capture_available and self.state in {"idle", "paused"}
+        self.start.setEnabled(can_start)
+        provider = self.selected_provider()
+        mode = "云端监听" if provider is OPENAI else "本地转写"
+        self.start.setText(("恢复" if self.state == "paused" else "确认并开始") + mode)
+        data_route = ("所选音频会发送至 OpenAI 转写。"
+                      if provider is OPENAI else "音频在本机转写。")
+        self.capture_notice.setText(
+            f"开始前请确认已取得必要同意。{data_route}日语文字和已授权资料可发送至 {provider.label}。"
+        )
+        self.capture_notice.setVisible(can_start and self.state == "idle")
         self.pause.setEnabled(self.state == "active")
         self.stop.setEnabled(self.state in {"active", "paused"})
         key, row = self.current_row()
@@ -699,7 +703,6 @@ class CloudPane(QWidget):
         self.clear_live_caption()
         if self.worker is not None:
             self.worker.stop()
-        self.consent.setChecked(False)
         self.approved_facts = ()
         self.approved_personal = PersonalInfo()
         self.asr_status.setText("已停止")
@@ -713,7 +716,6 @@ class CloudPane(QWidget):
         self.clear_live_caption()
         if self.state == "active":
             self.state = "idle"
-            self.consent.setChecked(False)
             self.approved_facts = ()
             self.approved_personal = PersonalInfo()
             if self.audio_status.text().startswith(("正在", "音频 ·")):
