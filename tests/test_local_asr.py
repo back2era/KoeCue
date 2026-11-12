@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from threading import Event
 
 import pytest
@@ -7,6 +8,22 @@ from ai_japanese_interview_assistant import local_asr
 from ai_japanese_interview_assistant.audio import AudioError
 from ai_japanese_interview_assistant.local_asr import run_local_transcription
 from ai_japanese_interview_assistant.transcription import TranscriptBook
+
+
+def test_frozen_app_uses_complete_bundled_model_and_keeps_local_fallback(monkeypatch, tmp_path):
+    local = tmp_path / "LocalAppData"
+    packaged = tmp_path / "KoeCue"
+    bundled_model = packaged / "models" / "faster-whisper-base"
+    monkeypatch.setattr(local_asr, "app_directory", lambda: local)
+    monkeypatch.setattr(sys, "executable", str(packaged / "KoeCue.exe"))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    bundled_model.mkdir(parents=True)
+    for name in local_asr.MODEL_FILES:
+        (bundled_model / name).touch()
+
+    assert local_asr.decoder_model_directory() == bundled_model
+    (bundled_model / "model.bin").unlink()
+    assert local_asr.decoder_model_directory() == local / "models" / "faster-whisper-base"
 
 
 def test_short_turns_finalize_and_the_uncommitted_tail_is_discarded():

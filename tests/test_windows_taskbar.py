@@ -7,6 +7,14 @@ from textwrap import dedent
 import pytest
 
 
+def test_frozen_taskbar_relaunches_the_packaged_executable(monkeypatch):
+    from ai_japanese_interview_assistant import windows_taskbar
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", r"C:\Program Files\KoeCue\KoeCue.exe")
+    assert windows_taskbar._relaunch_command() == r'"C:\Program Files\KoeCue\KoeCue.exe"'
+
+
 @pytest.mark.skipif(
     sys.platform != "win32" or os.environ.get("AIJA_TEST_GUI") != "1",
     reason="opt-in native Windows Qt test",

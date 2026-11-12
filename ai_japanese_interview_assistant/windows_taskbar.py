@@ -95,6 +95,8 @@ def _save_icon(icon):
 
 def _relaunch_command():
     executable = Path(sys.executable)
+    if getattr(sys, "frozen", False):
+        return list2cmdline([str(executable)])
     windowed = executable.with_name("pythonw.exe")
     launcher = Path(__file__).resolve().parents[1] / "launch.pyw"
     return list2cmdline([str(windowed if windowed.is_file() else executable), str(launcher)])
