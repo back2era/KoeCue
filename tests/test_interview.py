@@ -49,13 +49,29 @@ def test_question_yields_bilingual_answer_after_check():
 
 
 def test_unsupported_personal_claim_is_not_shown():
-    text = ScriptedText([
-        {"before_ja": "私は東京大学を卒業しました。", "before_zh": "我毕业于东京大学。",
-         "after_ja": "", "after_zh": "", "fact_ids": []},
-        {"safe": False},
-    ])
+    unsafe = {"before_ja": "私は東京大学を卒業しました。", "before_zh": "我毕业于东京大学。",
+              "after_ja": "", "after_zh": "", "fact_ids": []}
+    text = ScriptedText([unsafe, {"safe": False}, unsafe, {"safe": False}])
     with pytest.raises(ServiceError, match="核验"):
         asyncio.run(InterviewService(text).suggest("どのように進めますか。", automatic=True))
+    assert [purpose for purpose, _ in text.calls] == ["draft", "verify_answer", "rewrite", "verify_answer"]
+
+
+@pytest.mark.parametrize("initial_chinese,initial_safe", [("我学过工学。", False), ("", True)])
+def test_self_introduction_is_rewritten_after_a_rejected_or_empty_draft(initial_chinese, initial_safe):
+    question = "学歴を含めて、簡単に自己紹介をしてください。"
+    initial = {"before_ja": "工学を学びました。", "before_zh": initial_chinese,
+               "after_ja": "", "after_zh": "", "fact_ids": []}
+    rewrite = {"before_ja": "【学校名】で【専攻】を学びました。", "before_zh": "我在【学校名】学习了【专业】。",
+               "after_ja": "", "after_zh": "", "fact_ids": []}
+    text = ScriptedText([initial, {"safe": initial_safe}, rewrite, {"safe": True}])
+
+    answer = asyncio.run(InterviewService(text).suggest(question, automatic=True, level="N3"))
+
+    assert answer == Answer(rewrite["before_ja"], rewrite["before_zh"])
+    assert [purpose for purpose, _ in text.calls] == ["draft", "verify_answer", "rewrite", "verify_answer"]
+    assert json.loads(text.calls[2][1]) == {"question": question, "facts": []}
+    assert "占位符" in text.prompts["rewrite"] and "N3" in text.prompts["rewrite"]
 
 
 @pytest.mark.parametrize("facts", [(), (Fact("fixture", "education", "工学を学びました。", "我学过工学。"),)])
@@ -155,15 +171,21 @@ def test_missing_or_invalid_excerpt_attribution_stops_before_verification(ids, j
     assert [purpose for purpose, _ in text.calls] == ["question", "draft"]
 
 
-def test_answer_is_rejected_when_one_language_overstates_the_excerpt():
+def test_rewrite_does_not_resend_a_rejected_excerpt_or_interview_context():
     draft = dict(EXCERPT_DRAFT, excerpt_zh=["我带领团队测量了无线电信号。"])
-    text = ScriptedText([EXCERPT_CLASSIFICATION, draft, {"safe": False}])
+    rewrite = {"before_ja": "測定する場合、まず条件を確認します。", "before_zh": "进行测量时，我会先确认条件。",
+               "after_ja": "", "after_zh": "", "fact_ids": []}
+    info = PersonalInfo(resume=excerpt_info().resume, company="示例株式会社")
+    text = ScriptedText([EXCERPT_CLASSIFICATION, draft, {"safe": False}, rewrite, {"safe": True}])
 
-    with pytest.raises(ServiceError, match="核验"):
-        asyncio.run(InterviewService(text).suggest(EXCERPT_QUESTION, automatic=True, personal_info=excerpt_info()))
+    answer = asyncio.run(InterviewService(text).suggest(EXCERPT_QUESTION, automatic=True, personal_info=info))
+
+    assert answer == Answer(rewrite["before_ja"], rewrite["before_zh"])
     assert json.loads(text.calls[2][1])["excerpts"] == [{
         "source": "I measured radio signals.", "ja": "無線信号を測定しました。", "zh": "我带领团队测量了无线电信号。",
     }]
+    assert json.loads(text.calls[3][1]) == {"question": EXCERPT_QUESTION, "facts": []}
+    assert "excerpts" not in json.loads(text.calls[4][1])
 
 
 def test_draft_can_use_a_generic_suggestion_when_no_excerpt_answers_the_question():
@@ -183,6 +205,7 @@ def test_draft_can_use_a_generic_suggestion_when_no_excerpt_answers_the_question
 
 @pytest.mark.parametrize("stage,expected", [
     ("question", ["question"]), ("draft", ["question", "draft"]),
+    ("verify_answer", ["question", "draft", "verify_answer"]),
 ])
 def test_revocation_stops_further_excerpt_requests(stage, expected):
     authorized = True
@@ -195,7 +218,7 @@ def test_revocation_stops_further_excerpt_requests(stage, expected):
                 authorized = False
             return response
 
-    text = RevokingText([EXCERPT_CLASSIFICATION, EXCERPT_DRAFT])
+    text = RevokingText([EXCERPT_CLASSIFICATION, EXCERPT_DRAFT, {"safe": False}])
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(InterviewService(text).suggest(
             EXCERPT_QUESTION, automatic=True, personal_info=excerpt_info(), allowed=lambda: authorized,
