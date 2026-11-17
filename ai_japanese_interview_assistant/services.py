@@ -15,6 +15,13 @@ class ServiceError(Exception):
     """Short message safe to show to the user."""
 
 
+class StructuredOutputError(ServiceError):
+    """The provider responded, but its output does not match the requested format."""
+
+    def __init__(self, message="模型输出格式不正确。"):
+        super().__init__(message)
+
+
 def client_for(key, provider=OPENAI):
     headers = ({"x-api-key": key, "anthropic-version": "2026-10-21"} if provider is ANTHROPIC
                else {"Authorization": f"Bearer {key}"})
@@ -188,7 +195,11 @@ class TextService:
                 "\n只输出一个符合以下 JSON Schema 的 JSON 对象。"
                 "不要添加 Markdown 标记或解释。\n" + json.dumps(schema, ensure_ascii=False)
             )
-            if self.provider in (QWEN, KIMI, GLM) and self.model in self.provider.models:
+            if self.provider in (QWEN, KIMI, GEMINI) and self.model in self.provider.models:
+                payload["response_format"] = {
+                    "type": "json_schema", "json_schema": {"name": name, "schema": schema, "strict": True},
+                }
+            elif self.provider is GLM and self.model in GLM.models:
                 payload["response_format"] = {"type": "json_object"}
         elif self.provider is ANTHROPIC:
             payload.setdefault("output_config", {})["format"] = {"type": "json_schema", "schema": schema}
@@ -200,7 +211,12 @@ class TextService:
         async with asyncio.timeout(18):
             response = await self.client.post(self.url, json=payload)
             response.raise_for_status()
-            result = response.json()
+            try:
+                result = response.json()
+            except ValueError as exc:
+                raise StructuredOutputError() from exc
+        if not isinstance(result, dict):
+            raise StructuredOutputError()
         raw = ""
         if self.provider.chat:
             choices = result.get("choices") or []
@@ -218,8 +234,8 @@ class TextService:
                 normalize_enum = self.provider is ANTHROPIC
                 return {key: _checked_value(parsed[key], field, normalize_enum) for key, field in properties.items()}
         except ValueError as exc:
-            raise ServiceError("未收到完整的结构化结果。") from exc
-        raise ServiceError("未收到完整的结构化结果。")
+            raise StructuredOutputError("未收到完整的结构化结果。") from exc
+        raise StructuredOutputError("未收到完整的结构化结果。")
 
 
 def _checked_value(value, schema, normalize_enum):

@@ -1,18 +1,21 @@
 """Qt worker coordinating live audio, speech recognition, and text jobs."""
 import asyncio
+from collections import deque
+from difflib import SequenceMatcher
 from functools import partial
+import re
 from threading import Event
 from time import monotonic
+import unicodedata
 
 from PySide6.QtCore import QThread, Signal
 
-from .answer_format import DEFAULT_ANSWER_LEVEL
 from .audio import AudioBuffer, AudioError, capture, check_topology
 from .config import OPENAI
-from .interview import InterviewService
 from .local_asr import LocalAsrError, load_decoder, run_local_transcription
 from .personal import PersonalInfo
 from .services import TextService, client_for, error_message
+from .spoken_cues import CueOptions, DEFAULT_LEVEL, SpokenCueService
 from .telemetry import Event as LogEvent, record
 from .transcription import AudioProcessor, LOCAL_PREVIEW_EVENT, RealtimeError, TranscriptBook, run_transcription
 
@@ -20,6 +23,21 @@ from .transcription import AudioProcessor, LOCAL_PREVIEW_EVENT, RealtimeError, T
 ANSWER_PENDING = "正在生成建议…"
 MAX_ACTIVE_TEXT_JOBS = 8
 MAX_WAITING_ANSWERS = 32
+ANSWER_TIMEOUT = 26
+_FILLERS = {"えーと", "えっと", "あの", "はい", "うん", "そうですね"}
+_DISTINCTIONS = re.compile(r"\d+|ない|ません|せず")
+
+
+def _question_key(text):
+    text = unicodedata.normalize("NFKC", text).casefold()
+    return "".join(char for char in text if char.isalnum())
+
+
+def _similar_question(left, right):
+    return left == right or (
+        min(len(left), len(right)) >= 14 and _DISTINCTIONS.findall(left) == _DISTINCTIONS.findall(right)
+        and SequenceMatcher(None, left, right, autojunk=False).ratio() >= 0.95
+    )
 
 
 class LiveWorker(QThread):
@@ -31,8 +49,8 @@ class LiveWorker(QThread):
     answer = Signal(object, object, str, bool)
 
     def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False,
-                 facts=(), personal_info=PersonalInfo(), provider=OPENAI, answer_level=DEFAULT_ANSWER_LEVEL,
-                 model="", workspace=""):
+                 facts=(), personal_info=PersonalInfo(), provider=OPENAI, answer_level=DEFAULT_LEVEL,
+                 model="", workspace="", cue_options=CueOptions()):
         super().__init__(parent)
         self.generation = generation
         self.session_id = session_id
@@ -43,6 +61,7 @@ class LiveWorker(QThread):
         self.workspace = workspace
         self.auto_answer = auto_answer
         self.answer_level = answer_level
+        self.cue_options = cue_options
         self.facts = facts
         self.personal_info = personal_info
         self.sharing_revoked = Event()
@@ -50,6 +69,7 @@ class LiveWorker(QThread):
         self.book = TranscriptBook()
         self.jobs = {}
         self.waiting_answers = {}
+        self.recent_questions = deque(maxlen=4)
         self.loop = None
         self.runner = None
 
@@ -116,7 +136,7 @@ class LiveWorker(QThread):
             return
         async with client_for(self.key, self.provider) as client:
             self.service = TextService(client, self.provider, model=self.model, workspace=self.workspace)
-            self.interview = InterviewService(self.service)
+            self.interview = SpokenCueService(self.service)
             started = monotonic()
             try:
                 if self.provider is OPENAI:
@@ -208,8 +228,27 @@ class LiveWorker(QThread):
             self.order.emit(tuple((self.session_id, self.generation, entry.item_id) for entry in self.book.parts))
         if kind.endswith("transcription.completed") and part.text:
             self.start_translation(row_id, part.text)
-            if self.auto_answer:
+            if self.auto_answer and self.should_suggest(part.text):
                 self.start_answer(row_id, part.text, True)
+
+    def should_suggest(self, text):
+        key = _question_key(text)
+        if len(key) < 2 or key in _FILLERS or text.strip().endswith(("…", "、", "…？", "、、、")):
+            return False
+        now = monotonic()
+        if any(now - sent < 9 and _similar_question(key, previous) for sent, previous in self.recent_questions):
+            return False
+        self.recent_questions.append((now, key))
+        return True
+
+    def preceding(self, row_id):
+        preceding = deque(maxlen=2)
+        for part in self.book.parts:
+            if part.item_id == row_id[-1]:
+                return tuple(preceding)
+            if part.final and part.text and not part.failed:
+                preceding.append(part.text)
+        return ()
 
     def start_translation(self, row_id, text):
         job_id = ("translation", row_id)
@@ -280,20 +319,29 @@ class LiveWorker(QThread):
 
         self.answer.emit(row_id, None, ANSWER_PENDING, scoped)
         try:
-            answer = await self.interview.suggest(
-                text, automatic=automatic, facts=facts, personal_info=personal_info, level=level, allowed=allowed,
-            )
+            async with asyncio.timeout(ANSWER_TIMEOUT):
+                options = {}
+                if isinstance(self.interview, SpokenCueService):
+                    options = {"options": self.cue_options, "previous": self.preceding(row_id)}
+                answer = await self.interview.suggest(
+                    text, automatic=automatic, facts=facts, personal_info=personal_info, level=level, allowed=allowed,
+                    **options,
+                )
             if not allowed():
                 raise asyncio.CancelledError
         except asyncio.CancelledError:
             self.answer.emit(row_id, None, "回答已取消", scoped)
             raise
         except Exception as exc:
+            record(LogEvent.API_ERROR)
             self.answer.emit(row_id, None, error_message(exc), scoped)
         else:
+            if answer is None:
+                self.answer.emit(row_id, None, "这段没有需要回答的完整问题", scoped)
+                return
             record(LogEvent.ANSWER_READY, monotonic() - started)
             self.answer.emit(row_id, answer, "建议已生成", scoped)
-            if not allowed():
+            if not answer.ja or not allowed():
                 return
             try:
                 annotated = await self.interview.annotate_answer(answer)

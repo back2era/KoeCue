@@ -83,6 +83,7 @@ class MainWindow(QMainWindow):
         current = self.tabs.widget(index)
         if current is not self.cloud:
             self.cloud.settings_toggle.setChecked(False)
+            self.cloud.compact_toggle.setChecked(False)
         if current is self.diagnostic and self.cloud.state != "idle":
             self.cloud.stop_session()
         if current is not self.diagnostic and self.diagnostic.state != "idle":

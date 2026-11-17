@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 
-CATEGORIES = ("education", "skill", "experience", "project", "target")
+CATEGORIES = ("education", "skill", "experience", "project", "target", "internship", "motivation", "other")
 
 
 class ProfileError(Exception):
@@ -92,6 +92,11 @@ class ProfileStore:
 
 def select_facts(authorized, question, categories):
     normalized = question.casefold()
+    categories = set(categories)
+    if "experience" in categories:
+        categories.add("internship")
+    if "motivation" in categories:
+        categories.add("target")
     ranked = []
     for fact in authorized:
         if fact.category in categories:

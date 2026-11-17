@@ -7,21 +7,21 @@ from pathlib import Path
 from time import monotonic
 
 from .config import PROVIDERS
-from .interview import InterviewService
 from .services import TextService, client_for, error_message
+from .spoken_cues import SpokenCueService
 
 
 async def validate(args, key, provider):
     async with client_for(key, provider) as client:
         text_service = TextService(client, provider, model=args.model, workspace=args.workspace)
-        interview = InterviewService(text_service)
+        interview = SpokenCueService(text_service)
         if args.classification:
             examples = json.loads(Path(args.classification).read_text(encoding="utf-8"))
             questions = sum(expected for _, expected in examples)
             correct, false_positives = 0, 0
             for japanese, expected in examples:
                 result = await interview.classify(japanese)
-                detected = result["question"] is True
+                detected = result["question"] and result["complete"]
                 correct += expected and detected
                 false_positives += detected and not expected
             print(f"examples={len(examples)} recall={correct / questions:.3f} false_positives={false_positives}")
@@ -36,9 +36,12 @@ async def validate(args, key, provider):
             translation += delta
         started = monotonic()
         answer = await interview.suggest(args.question, automatic=False)
+        if answer is None:
+            print("这段没有可回答的完整问题。")
+            return 1
         print(f"first_translation_delta_s={first_delta:.2f} answer_ready_s={monotonic() - started:.2f}")
         if args.show_text:
-            print(translation, answer.ja, answer.zh, sep="\n\n")
+            print(translation, " ・ ".join(answer.keywords), answer.ja, answer.zh, sep="\n\n")
         return 0
 
 

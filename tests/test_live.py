@@ -41,7 +41,6 @@ def test_revoking_personal_info_cancels_a_scoped_answer():
 
     asyncio.run(exercise())
 
-
 def test_stopping_worker_releases_its_authorized_snapshot():
     info = PersonalInfo(background="示例背景")
     facts = (Fact("fixture", "skill", "図面を読みます。", "我能读图纸。"),)
@@ -139,5 +138,47 @@ def test_answer_arrives_before_reading_aids_and_receives_current_difficulty(
         release.set()
         await asyncio.wait_for(task, 1)
         assert events == ([plain] if annotation_fails else [plain, enriched])
+
+    asyncio.run(exercise())
+def test_final_question_debounce_and_follow_up_context(monkeypatch):
+    async def exercise():
+        worker = LiveWorker(1, None, "test", auto_answer=True)
+        translations = []
+        suggestions = []
+        monkeypatch.setattr(worker, "start_translation", lambda *args: translations.append(args))
+        monkeypatch.setattr(worker, "start_answer", lambda *args: suggestions.append(args))
+
+        def final(item, sentence):
+            worker.on_event({"type": "conversation.item.input_audio_transcription.completed",
+                             "item_id": item, "transcript": sentence})
+
+        final("partial", "えーと")
+        final("first", "SPIの特徴を教えてください。")
+        final("duplicate", "SPI の特徴を教えてください！")
+        final("followup", "なぜですか？")
+        assert len(translations) == 4
+        assert [item[0][-1] for item in suggestions] == ["first", "followup"]
+        assert worker.preceding((0, 1, "followup"))[-1] == "SPI の特徴を教えてください！"
+
+    asyncio.run(exercise())
+
+
+def test_timed_out_answer_emits_safe_failure_without_a_draft(monkeypatch):
+    from ai_japanese_interview_assistant import live
+
+    async def exercise():
+        class Unavailable:
+            async def suggest(self, *args, **kwargs):
+                await asyncio.Future()
+
+        worker = LiveWorker(1, None, "test")
+        worker.interview = Unavailable()
+        replies = []
+        worker.answer.connect(lambda _, answer, status, scoped: replies.append((answer, status)))
+        monkeypatch.setattr(live, "ANSWER_TIMEOUT", 0.01)
+        monkeypatch.setattr(live, "record", lambda *args: None)
+        await worker.suggest((0, 1, "timeout"), "どのように進めますか。", automatic=True)
+        assert replies[0] == (None, live.ANSWER_PENDING)
+        assert replies[-1][0] is None and "超时" in replies[-1][1]
 
     asyncio.run(exercise())

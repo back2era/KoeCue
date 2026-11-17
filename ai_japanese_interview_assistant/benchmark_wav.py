@@ -8,7 +8,7 @@ from pathlib import Path
 from time import monotonic
 
 from .config import REALTIME_MODEL, TEXT_MODEL
-from .interview import InterviewService
+from .spoken_cues import SpokenCueService
 from .services import TextService, client_for
 from .transcribe_wav import stream_wav
 
@@ -39,7 +39,7 @@ async def measure(path, key, service, speech_start, speech_end, needs_answer):
 
     async def suggestion(text):
         nonlocal answer_ready
-        result = await InterviewService(service).suggest(text, automatic=True)
+        result = await SpokenCueService(service).suggest(text, automatic=True)
         if result is not None:
             answer_ready = monotonic() - final
 
