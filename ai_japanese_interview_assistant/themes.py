@@ -1,71 +1,75 @@
-"""Color palettes for the desktop themes."""
+"""Saved theme IDs and the desktop application's color and spacing tokens."""
 from dataclasses import dataclass
+
+
+GAP = 8
+INSET = 16
+GUTTER = 24
+CONTROL_RADIUS = 7
+PANEL_RADIUS = 12
+
+TEXT_SMALL = 12
+TEXT_BODY = 14
+TEXT_CAPTION = 16
+TEXT_ANSWER = 20
+TEXT_TITLE = 24
+
+UI_FONTS = ("Inter", "Segoe UI", "Microsoft YaHei UI", "Yu Gothic UI")
+JAPANESE_FONTS = ("Yu Gothic UI", "Noto Sans JP", "Meiryo", "Microsoft YaHei UI")
 
 
 @dataclass(frozen=True)
 class Theme:
     label: str
     backdrop: str
-    glows: tuple[str, ...]
+    surface: str
+    elevated: str
+    border: str
     text: str
+    secondary: str
     muted: str
     disabled: str
-    surface_tint: str
-    border_tint: str
-    table: str
-    alternate_row: str
-    table_header: str
-    selection: str
-    focus: str
-    action_top: str
-    action_bottom: str
+    accent: str
+    action: str
     action_text: str
+    selection: str
+    success: str
+    warning: str
+    danger: str
     light: bool = False
 
 
-DEFAULT_THEME = "black"
+DEFAULT_THEME = "graphite"
 
 THEMES = {
     "graphite": Theme(
-        label="石墨银", backdrop="#111215", glows=("#41464e", "#303237", "#24282d"),
-        text="#edeef1", muted="#bbc0c8", disabled="#969ba3",
-        surface_tint="#e1e4ec", border_tint="#d5d9e3",
-        table="#1e1f23", alternate_row="#292b30", table_header="#393b41",
-        selection="#454b54", focus="#b9c2cf",
-        action_top="#e7e9ed", action_bottom="#b8bec8", action_text="#1d2229",
+        label="石墨银", backdrop="#111216", surface="#1b1c22", elevated="#25262d", border="#34363e",
+        text="#f1f1f4", secondary="#a4a6b1", muted="#8a8c9a", disabled="#777a87",
+        accent="#a4a5f0", action="#a1a2ee", action_text="#1c1d31", selection="#2d2e45",
+        success="#75c5a5", warning="#e1b780", danger="#f4a3a9",
     ),
     "ocean": Theme(
-        label="深海青", backdrop="#0b191b", glows=("#28484c", "#1f3439", "#173736"),
-        text="#e3f0ee", muted="#aac3bf", disabled="#859e9b",
-        surface_tint="#a6d1c7", border_tint="#afd1ca",
-        table="#142527", alternate_row="#1e3133", table_header="#304546",
-        selection="#315653", focus="#a9d5c8",
-        action_top="#c8ebe1", action_bottom="#95c6b8", action_text="#17312f",
+        label="深海青", backdrop="#121a1c", surface="#1a2628", elevated="#233336", border="#35484a",
+        text="#eaf5f3", secondary="#acc4bf", muted="#90aaa4", disabled="#758e8a",
+        accent="#a9dacd", action="#b1dfd2", action_text="#172f2c", selection="#2b4341",
+        success="#8bdbb9", warning="#edc390", danger="#f4a6aa",
     ),
     "glacier": Theme(
-        label="冰川白", backdrop="#e4edf5", glows=("#f7fbff", "#c5d9ee", "#d3e8ed"),
-        text="#213549", muted="#4a657b", disabled="#5e7487",
-        surface_tint="#ffffff", border_tint="#6487a7",
-        table="#edf4f9", alternate_row="#e3edf6", table_header="#dce7f0",
-        selection="#c4dcef", focus="#4e789b",
-        action_top="#e5f1fb", action_bottom="#c3dbee", action_text="#203649",
-        light=True,
+        label="冰川白", backdrop="#edf2f7", surface="#f7f9fc", elevated="#e4ebf4", border="#cbd6e4",
+        text="#243344", secondary="#465d73", muted="#556d83", disabled="#697d91",
+        accent="#304f89", action="#405e96", action_text="#f4f7ff", selection="#dce7f5",
+        success="#25614f", warning="#755023", danger="#983a50", light=True,
     ),
     "sand": Theme(
-        label="暖雾米", backdrop="#ece1d3", glows=("#fff9ee", "#e1c7b0", "#f5ebd9"),
-        text="#3b2e25", muted="#695548", disabled="#746557",
-        surface_tint="#fffdf8", border_tint="#9c7861",
-        table="#f5ede5", alternate_row="#eee5db", table_header="#ebe0d5",
-        selection="#edd5bb", focus="#8c6749",
-        action_top="#f8eee0", action_bottom="#e5cfb6", action_text="#3b2e25",
-        light=True,
+        label="暖雾米", backdrop="#f0e8dd", surface="#f8f1e8", elevated="#eae0d4", border="#d6c6b5",
+        text="#382c25", secondary="#614e42", muted="#6b5749", disabled="#756557",
+        accent="#764d37", action="#754e3a", action_text="#fcf6ed", selection="#eadbca",
+        success="#35614c", warning="#78501e", danger="#963d49", light=True,
     ),
     "black": Theme(
-        label="纯黑", backdrop="#000000", glows=(),
-        text="#f5f5f7", muted="#b3b3bb", disabled="#919199",
-        surface_tint="#e2e2ec", border_tint="#dedee5",
-        table="#101012", alternate_row="#1a1a1e", table_header="#262629",
-        selection="#3d3e46", focus="#c8c9d1",
-        action_top="#f3f3f6", action_bottom="#b6b7c0", action_text="#16161a",
+        label="深黑", backdrop="#131316", surface="#19191d", elevated="#24242a", border="#35353d",
+        text="#f2f2f5", secondary="#b2b2bc", muted="#93939e", disabled="#7d7d87",
+        accent="#bfc0e5", action="#c5c6e6", action_text="#212136", selection="#30313e",
+        success="#85c9ad", warning="#e6bd8b", danger="#f2a4ab",
     ),
 }

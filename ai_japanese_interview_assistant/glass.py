@@ -1,187 +1,150 @@
-"""Shared Qt material, typography and motion for the desktop windows."""
+"""Shared Qt controls, palette and motion for the KoeCue desktop."""
+import ctypes
 from string import Template
+import sys
 
 from PySide6.QtCore import QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap, QRadialGradient
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFrame, QGraphicsBlurEffect, QGraphicsOpacityEffect,
-    QGraphicsScene, QLabel, QProxyStyle, QStyle, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QDialog, QFrame, QGraphicsOpacityEffect,
+    QLabel, QProxyStyle, QPushButton, QStyle, QVBoxLayout, QWidget,
 )
 
-from .themes import DEFAULT_THEME, THEMES, Theme
+from .themes import (
+    CONTROL_RADIUS, DEFAULT_THEME, GAP, GUTTER, INSET, PANEL_RADIUS, TEXT_ANSWER,
+    TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, THEMES, Theme,
+)
 
 
 _STYLE = Template("""
 QWidget { color: $text; }
 QWidget:disabled { color: $disabled; }
+QWidget#appCanvas { background: $backdrop; }
 QLabel { background: transparent; }
-QLabel#appTitle { font-size: 21px; font-weight: 700; }
-QLabel#pageTitle { font-size: 24px; font-weight: 700; }
-QLabel#sectionTitle { font-size: 16px; font-weight: 700; }
-QLabel#muted, QLabel#captionState { color: $muted; font-size: 12px; }
-QLabel#captionText { font-size: 23px; }
-QLabel#answerText { font-size: 17px; }
-QLabel#answerTranslation { color: $muted; font-size: 15px; }
-QLabel#listeningBadge {
-    color: $muted; background: $control;
-    border: 1px solid $edge; border-radius: 13px;
-    padding: 5px 11px; font-size: 12px; font-weight: 700;
+QLabel#appTitle { font-size: 16px; font-weight: 650; }
+QLabel#pageTitle { font-size: ${title}px; font-weight: 600; }
+QLabel#sectionTitle { font-size: ${body}px; font-weight: 600; }
+QLabel#eyebrow, QLabel#muted, QLabel#captionState { color: $secondary; font-size: ${small}px; }
+QLabel#captionText { font-size: ${caption}px; }
+QLabel#translatedCaption, QLabel#answerTranslation { color: $secondary; font-size: ${body}px; }
+QLabel#answerText { font-size: ${answer}px; }
+QLabel#answerText[empty="true"] { color: $secondary; }
+QLabel#listeningBadge { color: $secondary; font-size: ${small}px; }
+QLabel#listeningBadge[tone="live"] { color: $success; }
+QLabel#listeningBadge[tone="pending"] { color: $warning; }
+QLabel#listeningBadge[tone="error"] { color: $danger; }
+QLabel#keyword {
+    color: $accent; background: $selection; border-radius: ${control_radius}px;
+    font-size: ${small}px; padding: 3px 8px;
 }
-QLabel#listeningBadge[tone="live"] { color: $live_text; background: $live_surface; }
-QLabel#listeningBadge[tone="pending"] { color: $pending_text; background: $pending_surface; }
-QFrame#glassPanel, QFrame#glassBar, QFrame#glassInset {
-    background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1,
-        stop:0 $panel_top, stop:1 $panel_bottom);
-    border: 1px solid $edge;
-    border-top-color: $edge_top;
-    border-radius: 23px;
+QFrame#glassPanel {
+    background: $surface; border: 1px solid $border; border-radius: ${panel_radius}px;
 }
-QFrame#glassBar { border-radius: 22px; }
-QFrame#glassInset { border-radius: 16px; }
-QFrame#answerCard {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 $answer_top, stop:1 $answer_bottom);
-    border: 1px solid $edge; border-radius: 17px;
-}
-QFrame#captionRule { background: $edge; border: none; }
+QFrame#toolbar, QFrame#sessionBar { background: $surface; }
+QFrame#toolbar { border-bottom: 1px solid $border; }
+QFrame#sessionBar { border-top: 1px solid $border; }
+QFrame#historyPane { background: $surface; }
+QFrame#answerCard, QFrame#glassInset { background: $surface; border-radius: ${panel_radius}px; }
+QFrame#captionRule { background: $border; border: none; }
 QPushButton, QComboBox, QLineEdit {
-    background: $control; color: $text;
-    border: 1px solid $edge; border-radius: 12px;
-    min-height: 20px; padding: 6px 12px;
+    background: $surface; color: $text;
+    border: 1px solid $border; border-radius: ${control_radius}px;
+    min-height: 18px; padding: 5px 10px;
 }
-QPushButton {
-    border-radius: 16px;
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 $control_top, stop:1 $control);
-}
-QPushButton:hover, QComboBox:hover { background: $control_hover; }
+QPushButton:hover, QComboBox:hover { background: $elevated; }
 QPushButton:pressed, QPushButton:checked { background: $selection; }
-QPushButton:focus, QComboBox:focus, QLineEdit:focus { border-color: $focus; }
+QPushButton:focus, QComboBox:focus, QLineEdit:focus { border-color: $accent; }
 QPushButton:disabled, QComboBox:disabled, QLineEdit:disabled {
-    color: $disabled; background: $control_disabled; border-color: $edge_soft;
+    color: $disabled; background: $backdrop; border-color: $border;
 }
 QPlainTextEdit {
-    color: $text; background: $table; border: 1px solid $edge; border-radius: 12px;
+    color: $text; background: $backdrop; border: 1px solid $border; border-radius: ${control_radius}px;
     padding: 8px; selection-background-color: $selection; selection-color: $text;
 }
-QPlainTextEdit:focus { border-color: $focus; }
-QPlainTextEdit:disabled { color: $disabled; border-color: $edge_soft; }
+QPlainTextEdit:focus { border-color: $accent; }
+QPlainTextEdit:disabled { color: $disabled; }
 QPushButton#primaryAction {
-    color: $action_text; font-weight: 700; border-color: $action_bottom;
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 $action_top, stop:1 $action_bottom);
+    color: $action_text; background: $action; border-color: $action; font-weight: 600;
 }
-QPushButton#primaryAction:hover { background: $action_top; }
-QPushButton#primaryAction:pressed { background: $action_bottom; }
-QPushButton#primaryAction:focus { border: 2px solid $focus; padding: 5px 11px; }
+QPushButton#primaryAction:hover { background: $accent; }
+QPushButton#primaryAction:pressed { background: $action; }
+QPushButton#primaryAction:focus { border-color: $text; }
 QPushButton#primaryAction:disabled {
-    color: $disabled; background: $control_disabled; border-color: $edge_soft;
+    color: $disabled; background: $elevated; border-color: $border;
 }
-QPushButton[nav="true"] { border-color: transparent; background: transparent; color: $muted; }
-QPushButton[nav="true"]:hover { background: $control_top; }
-QPushButton[nav="true"]:checked { background: $nav_selected; color: $text; }
-QPushButton[nav="true"]:focus { border-color: $focus; }
+QPushButton[nav="true"], QPushButton[quiet="true"] {
+    border-color: transparent; background: transparent; color: $secondary;
+}
+QPushButton[quiet="true"] { padding: 4px 8px; }
+QPushButton[nav="true"]:hover, QPushButton[quiet="true"]:hover {
+    background: $elevated; color: $text;
+}
+QPushButton[nav="true"]:checked, QPushButton[quiet="true"]:checked {
+    background: $selection; color: $text;
+}
+QPushButton[nav="true"]:focus, QPushButton[quiet="true"]:focus { border-color: $accent; }
+QPushButton[nav="true"]:disabled, QPushButton[quiet="true"]:disabled { color: $disabled; background: transparent; }
+QPushButton#iconButton { padding: 0; }
 QPushButton#vaultAction { padding-right: 23px; }
 QPushButton::menu-indicator { subcontrol-origin: padding; subcontrol-position: center right; right: 3px; }
 QComboBox { padding-right: 26px; }
 QComboBox::drop-down { subcontrol-origin: padding; width: 22px; border: none; }
 QComboBox::down-arrow { image: none; }
 QComboBox QAbstractItemView, QMenu {
-    background: $table; color: $text; border: 1px solid $focus;
+    background: $surface; color: $text; border: 1px solid $border;
     selection-background-color: $selection; selection-color: $text;
 }
-QMenu { padding: 5px; border-radius: 10px; }
-QMenu::item { padding: 6px 16px; border-radius: 6px; }
+QMenu { padding: 4px; border-radius: ${control_radius}px; }
+QMenu::item { padding: 6px 14px; border-radius: 5px; }
 QMenu::item:selected { background: $selection; }
 QCheckBox { spacing: 8px; min-height: 24px; }
 QTableWidget {
-    background: $table; alternate-background-color: $alternate_row;
-    color: $text; border: 1px solid $edge; border-radius: 12px;
+    background: $surface; alternate-background-color: $backdrop;
+    color: $text; border: 1px solid $border; border-radius: ${control_radius}px;
     selection-background-color: $selection; selection-color: $text;
 }
 QTableWidget::item { padding: 5px 8px; }
-QTableWidget::item:selected { background: $selection; }
-QTableWidget QLineEdit { background: $table; border-radius: 5px; padding: 0 4px; }
+QTableWidget QLineEdit { background: $surface; padding: 0 4px; }
 QHeaderView { background: transparent; }
 QHeaderView::section {
-    background: $table_header; color: $muted; padding: 8px;
-    border: none; border-bottom: 1px solid $edge;
+    background: $elevated; color: $secondary; padding: 8px;
+    border: none; border-bottom: 1px solid $border;
 }
-QTableCornerButton::section { background: $table_header; border: none; }
+QListWidget#conversationList { background: $surface; border: none; outline: none; }
 QScrollArea#captionScroll, QWidget#captionContent { background: transparent; }
-QSplitter::handle { background: transparent; }
-QSplitter::handle:hover { background: $edge; border-radius: 4px; }
-QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
-QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
-QScrollBar::handle { background: $scroll; border-radius: 3px; min-height: 22px; min-width: 22px; }
-QScrollBar::handle:hover { background: $scroll_hover; }
+QSplitter::handle { background: $border; }
+QSplitter::handle:hover { background: $accent; }
+QScrollBar:vertical { background: transparent; width: 9px; margin: 2px; }
+QScrollBar:horizontal { background: transparent; height: 9px; margin: 2px; }
+QScrollBar::handle { background: $border; border-radius: 3px; min-height: 24px; min-width: 24px; }
+QScrollBar::handle:hover { background: $muted; }
 QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {
     background: transparent; width: 0; height: 0;
 }
 QProgressBar {
-    background: $table; border: 1px solid $edge;
-    border-radius: 7px; min-height: 12px; max-height: 12px;
+    background: $backdrop; border: none; border-radius: 4px; min-height: 8px; max-height: 8px;
 }
-QProgressBar::chunk {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 $focus, stop:1 $action_top);
-    border-radius: 6px;
-}
-QToolTip { background: $table; color: $text; border: 1px solid $focus; padding: 5px; }
+QProgressBar::chunk { background: $success; border-radius: 4px; }
+QToolTip { background: $surface; color: $text; border: 1px solid $border; padding: 5px; }
 """)
 
 
-def _translucent(color: str, alpha: int) -> str:
-    red, green, blue, _ = QColor(color).getRgb()
-    return f"rgba({red}, {green}, {blue}, {alpha})"
-
-
 def _style(theme: Theme) -> str:
-    light = theme.light
     return _STYLE.substitute(
-        text=theme.text, muted=theme.muted, disabled=theme.disabled, focus=theme.focus,
-        table=theme.table, alternate_row=theme.alternate_row, table_header=theme.table_header,
-        selection=theme.selection, action_text=theme.action_text,
-        action_top=theme.action_top, action_bottom=theme.action_bottom,
-        panel_top=_translucent(theme.surface_tint, 179 if light else 43),
-        panel_bottom=_translucent(theme.surface_tint, 92 if light else 13),
-        edge=_translucent(theme.border_tint, 49 if light else 38),
-        edge_top=_translucent(theme.surface_tint, 218 if light else 62),
-        edge_soft=_translucent(theme.border_tint, 31 if light else 24),
-        answer_top=_translucent(theme.border_tint, 52 if light else 36),
-        answer_bottom=_translucent(theme.border_tint, 28 if light else 18),
-        control_top=_translucent(theme.surface_tint, 204 if light else 30),
-        control=_translucent(theme.surface_tint, 136 if light else 19),
-        control_hover=_translucent(theme.surface_tint, 232 if light else 47),
-        control_disabled=_translucent(theme.border_tint, 30 if light else 17),
-        nav_selected=_translucent(theme.border_tint, 48),
-        scroll=_translucent(theme.border_tint, 98),
-        scroll_hover=_translucent(theme.border_tint, 165),
-        live_text="#215e4b" if light else "#bafde7",
-        live_surface="rgba(83, 165, 130, 45)",
-        pending_text="#704313" if light else "#ffe2b2",
-        pending_surface="rgba(207, 151, 70, 52)",
+        vars(theme), small=TEXT_SMALL, body=TEXT_BODY, caption=TEXT_CAPTION,
+        answer=TEXT_ANSWER, title=TEXT_TITLE, control_radius=CONTROL_RADIUS, panel_radius=PANEL_RADIUS,
     )
-
-
-GLASS_STYLE = _style(THEMES[DEFAULT_THEME])
 
 
 def _palette(theme: Theme) -> QPalette:
     palette = QPalette()
     role = QPalette.ColorRole
     for key, color in {
-        role.Window: theme.backdrop,
-        role.WindowText: theme.text,
-        role.Base: theme.table,
-        role.AlternateBase: theme.alternate_row,
-        role.Text: theme.text,
-        role.PlaceholderText: theme.muted,
-        role.Button: theme.table_header,
-        role.ButtonText: theme.text,
-        role.Highlight: theme.selection,
-        role.HighlightedText: theme.text,
-        role.ToolTipBase: theme.table,
-        role.ToolTipText: theme.text,
-        role.Link: theme.focus,
-        role.Accent: theme.focus,
+        role.Window: theme.backdrop, role.WindowText: theme.text, role.Base: theme.surface,
+        role.AlternateBase: theme.backdrop, role.Text: theme.text, role.PlaceholderText: theme.secondary,
+        role.Button: theme.elevated, role.ButtonText: theme.text, role.Mid: theme.border,
+        role.Highlight: theme.selection, role.HighlightedText: theme.text, role.ToolTipBase: theme.surface,
+        role.ToolTipText: theme.text, role.Link: theme.accent, role.Accent: theme.accent,
     }.items():
         palette.setColor(key, QColor(color))
     for key in (role.WindowText, role.Text, role.ButtonText):
@@ -189,13 +152,13 @@ def _palette(theme: Theme) -> QPalette:
     return palette
 
 
-def _active_theme() -> Theme:
+def active_theme() -> Theme:
     theme_id = QApplication.instance().property("interviewTheme")
     return THEMES.get(theme_id, THEMES[DEFAULT_THEME])
 
 
 def apply_theme(app: QApplication, theme_id: str) -> None:
-    """Apply colors to the application and refresh canvases already on screen."""
+    """Update existing windows and future controls from the same theme."""
     if theme_id not in THEMES:
         theme_id = DEFAULT_THEME
     theme = THEMES[theme_id]
@@ -203,57 +166,21 @@ def apply_theme(app: QApplication, theme_id: str) -> None:
     app.styleHints().setColorScheme(Qt.ColorScheme.Light if theme.light else Qt.ColorScheme.Dark)
     app.setPalette(_palette(theme))
     app.setStyleSheet(_style(theme))
-    canvases = [widget for widget in app.allWidgets() if isinstance(widget, GlassCanvas)]
-    if canvases:
-        backdrop = _soft_light(theme)
-        for canvas in canvases:
-            canvas.backdrop = backdrop
-            canvas.update()
 
 
-def _soft_light(theme: Theme) -> QPixmap:
-    """Blur the decorative background independently of live widgets."""
-    width, height = 480, 320
-    backdrop = QPixmap(width, height)
-    backdrop.fill(QColor(theme.backdrop))
-    if not theme.glows:
-        return backdrop
-
-    source = QPixmap(width, height)
-    source.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(source)
-    for (x, y, radius), color in zip(((44, 31, 220), (445, 80, 237), (158, 331, 225)), theme.glows):
-        glow = QRadialGradient(QPointF(x, y), radius)
-        tint = QColor(color)
-        glow.setColorAt(0, tint)
-        tint.setAlpha(110)
-        glow.setColorAt(0.62, tint)
-        glow.setColorAt(1, Qt.GlobalColor.transparent)
-        painter.fillRect(source.rect(), glow)
-    painter.end()
-
-    bounds = QRectF(source.rect())
-    scene = QGraphicsScene(bounds)
-    layer = scene.addPixmap(source)
-    blur = QGraphicsBlurEffect()
-    blur.setBlurRadius(24)
-    blur.setBlurHints(QGraphicsBlurEffect.BlurHint.QualityHint)
-    layer.setGraphicsEffect(blur)
-    painter = QPainter(backdrop)
-    scene.render(painter, bounds, bounds)
-    painter.end()
-    return backdrop
+def set_role(widget, name, value):
+    if widget.property(name) != value:
+        widget.setProperty(name, value)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
 
 
 class GlassCanvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.backdrop = _soft_light(_active_theme())
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        painter.drawPixmap(self.rect(), self.backdrop)
+        self.setObjectName("appCanvas")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
 
 
 class GlassStyle(QProxyStyle):
@@ -269,14 +196,16 @@ class GlassStyle(QProxyStyle):
         if element != QStyle.PrimitiveElement.PE_IndicatorCheckBox:
             super().drawPrimitive(element, option, painter, widget)
             return
-        theme = _active_theme()
+        theme = active_theme()
         enabled = bool(option.state & QStyle.StateFlag.State_Enabled)
         checked = bool(option.state & QStyle.StateFlag.State_On)
+        focus = option.state & QStyle.StateFlag.State_HasFocus
+        hovered = option.state & QStyle.StateFlag.State_MouseOver
         rect = QRectF(option.rect).adjusted(0.5, 0.5, -0.5, -0.5)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QColor(theme.focus if enabled else theme.disabled))
-        painter.setBrush(QColor(theme.action_bottom if checked and enabled else theme.table))
+        painter.setPen(QColor(theme.accent if enabled and (checked or focus or hovered) else theme.border))
+        painter.setBrush(QColor(theme.action if checked and enabled else theme.surface))
         painter.drawRoundedRect(rect, 4, 4)
         if checked:
             pen = QPen(QColor(theme.action_text if enabled else theme.disabled))
@@ -293,15 +222,15 @@ class GlassStyle(QProxyStyle):
 class GlassComboBox(QComboBox):
     def paintEvent(self, event):
         super().paintEvent(event)
-        theme = _active_theme()
+        theme = active_theme()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor(theme.text if self.isEnabled() else theme.disabled))
+        pen = QPen(QColor(theme.secondary if self.isEnabled() else theme.disabled))
         pen.setWidthF(1.4)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
-        x, y = self.width() - 16, self.height() / 2
+        x, y = self.width() - 14, self.height() / 2
         chevron = QPainterPath(QPointF(x - 3.5, y - 1.5))
         chevron.lineTo(x, y + 2)
         chevron.lineTo(x + 3.5, y - 1.5)
@@ -317,7 +246,7 @@ class GlassDialog(QDialog):
         canvas = GlassCanvas(self)
         frame.addWidget(canvas)
         self.body = QVBoxLayout(canvas)
-        self.body.setContentsMargins(22, 20, 22, 20)
+        self.body.setContentsMargins(GUTTER, GUTTER, GUTTER, INSET)
         self.body.setSpacing(12)
         self.body.addWidget(plain_label(title, "pageTitle"))
 
@@ -336,11 +265,16 @@ def plain_label(text, name):
     return label
 
 
+def quiet_button(button):
+    button.setProperty("quiet", True)
+    return button
+
+
 def _paint_waveform_mark(painter, edge, fill, wave):
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(edge)
     painter.setBrush(fill)
-    painter.drawRoundedRect(QRectF(0.5, 0.5, 37, 37), 12, 12)
+    painter.drawRoundedRect(QRectF(0.5, 0.5, 37, 37), 10, 10)
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(wave)
     for index, height in enumerate((8, 15, 21, 12, 6)):
@@ -365,16 +299,63 @@ def application_icon():
 class BrandMark(QWidget):
     def __init__(self):
         super().__init__()
-        self.setFixedSize(38, 38)
+        self.setFixedSize(28, 28)
 
     def paintEvent(self, event):
-        theme = _active_theme()
+        theme = active_theme()
         painter = QPainter(self)
-        edge = QColor(theme.border_tint)
-        edge.setAlpha(112)
-        fill = QColor(theme.action_bottom)
-        fill.setAlpha(131)
-        _paint_waveform_mark(painter, edge, fill, QColor(theme.text))
+        painter.scale(self.width() / 38, self.height() / 38)
+        _paint_waveform_mark(painter, QColor(theme.border), QColor(theme.selection), QColor(theme.accent))
+
+
+class IconButton(QPushButton):
+    """Small, consistently weighted toolbar actions with native focus and tooltips."""
+
+    def __init__(self, kind, name):
+        super().__init__()
+        self.kind = kind
+        self.setObjectName("iconButton")
+        self.setFixedSize(32, 32)
+        self.setAccessibleName(name)
+        self.setToolTip(name)
+        quiet_button(self)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.translate(8, 8)
+        theme = active_theme()
+        pen = QPen(QColor(theme.accent if self.isChecked() else theme.secondary))
+        pen.setWidthF(1.35)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        if self.kind in {"history", "window", "main"}:
+            painter.drawRoundedRect(QRectF(1, 2.5, 14, 11), 2, 2)
+            if self.kind == "history":
+                painter.drawLine(QPointF(10, 3), QPointF(10, 13))
+            elif self.kind == "window":
+                painter.drawRoundedRect(QRectF(7, 7, 5, 3.5), .7, .7)
+        elif self.kind == "pin":
+            path = QPainterPath(QPointF(6, 2))
+            for x, y in ((12, 2), (10, 5), (10, 8), (12, 10), (4, 10), (6, 8), (6, 5), (4, 2), (6, 2)):
+                path.lineTo(x, y)
+            painter.drawPath(path)
+            painter.drawLine(QPointF(8, 10), QPointF(8, 15))
+        elif self.kind == "settings":
+            for y, x in ((4, 5), (8, 11), (12, 7)):
+                painter.drawLine(QPointF(2, y), QPointF(x - 1.5, y))
+                painter.drawLine(QPointF(x + 1.5, y), QPointF(14, y))
+                painter.drawEllipse(QPointF(x, y), 1.5, 1.5)
+
+
+def motion_enabled():
+    if sys.platform != "win32":
+        return True
+    animation = ctypes.c_int()
+    success = ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(animation), 0)
+    return not success or bool(animation.value)
 
 
 class PageFade:
@@ -384,7 +365,7 @@ class PageFade:
         self.effect.setEnabled(False)
         widget.setGraphicsEffect(self.effect)
         self.animation = QPropertyAnimation(self.effect, b"opacity", widget)
-        self.animation.setStartValue(0.72)
+        self.animation.setStartValue(0.8)
         self.animation.setEndValue(1.0)
         self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.animation.finished.connect(lambda: self.effect.setEnabled(False))
@@ -393,8 +374,8 @@ class PageFade:
         self.animation.stop()
         self.effect.setEnabled(False)
         duration = self.widget.style().styleHint(QStyle.StyleHint.SH_Widget_Animation_Duration)
-        if duration > 0:
-            self.animation.setDuration(min(duration, 180))
-            self.effect.setOpacity(0.72)
+        if duration > 0 and motion_enabled():
+            self.animation.setDuration(min(duration, 200))
+            self.effect.setOpacity(0.8)
             self.effect.setEnabled(True)
             self.animation.start()
