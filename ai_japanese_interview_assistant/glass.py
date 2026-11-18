@@ -22,8 +22,6 @@ QLabel#muted, QLabel#captionState { color: $muted; font-size: 12px; }
 QLabel#captionText { font-size: 23px; }
 QLabel#answerText { font-size: 17px; }
 QLabel#answerTranslation { color: $muted; font-size: 15px; }
-QLabel#cueKeywords { color: $focus; font-size: 19px; font-weight: 700; }
-QLabel#rescueText { color: $text; font-size: 12px; }
 QLabel#listeningBadge {
     color: $muted; background: $control;
     border: 1px solid $edge; border-radius: 13px;
@@ -41,7 +39,9 @@ QFrame#glassPanel, QFrame#glassBar, QFrame#glassInset {
 QFrame#glassBar { border-radius: 22px; }
 QFrame#glassInset { border-radius: 16px; }
 QFrame#answerCard {
-    background: $answer_top; border-radius: 15px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 $answer_top, stop:1 $answer_bottom);
+    border: 1px solid $edge; border-radius: 17px;
 }
 QFrame#captionRule { background: $edge; border: none; }
 QPushButton, QComboBox, QLineEdit {
@@ -146,6 +146,7 @@ def _style(theme: Theme) -> str:
         edge_top=_translucent(theme.surface_tint, 218 if light else 62),
         edge_soft=_translucent(theme.border_tint, 31 if light else 24),
         answer_top=_translucent(theme.border_tint, 52 if light else 36),
+        answer_bottom=_translucent(theme.border_tint, 28 if light else 18),
         control_top=_translucent(theme.surface_tint, 204 if light else 30),
         control=_translucent(theme.surface_tint, 136 if light else 19),
         control_hover=_translucent(theme.surface_tint, 232 if light else 47),

@@ -11,7 +11,7 @@ from .glass import GlassComboBox, GlassDialog, glass_panel, plain_label
 from .profiles import CATEGORIES, Fact, ProfileError, ProfileStore, validate_facts
 
 
-LABELS = ("教育背景", "技能", "工作经历", "项目经历", "求职岗位", "实习经历", "求职动机", "其他已确认事实")
+LABELS = ("教育背景", "技能", "工作经历", "项目经历", "求职岗位")
 
 
 class PrivateIO(QThread):

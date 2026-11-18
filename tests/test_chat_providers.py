@@ -127,14 +127,11 @@ def test_claude_opus_uses_adaptive_thinking_with_structured_outputs():
     assert run_with_client(handle, structure) == {"safe": True}
 
 
-@pytest.mark.parametrize("code,native", [("qwen", True), ("kimi", True), ("gemini", True), ("glm", False)])
-def test_chat_models_prefer_native_schema_when_documented(code, native):
+@pytest.mark.parametrize("code", ["qwen", "kimi", "glm"])
+def test_documented_chat_models_request_json_mode(code):
     def handle(request):
         payload = json.loads(request.content)
-        format_ = payload["response_format"]
-        assert format_["type"] == ("json_schema" if native else "json_object")
-        if native:
-            assert format_["json_schema"]["schema"]["required"] == ["safe"]
+        assert payload["response_format"] == {"type": "json_object"}
         return httpx.Response(200, json={"choices": [{
             "message": {"content": '{"safe":true}'}, "finish_reason": "stop",
         }]})

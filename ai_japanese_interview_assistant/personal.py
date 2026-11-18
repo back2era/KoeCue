@@ -241,8 +241,6 @@ def _read_pdf(raw):
 
 
 _CATEGORY_TERMS = {
-    "internship": ("internship", "intern", "インターン", "実習", "实习", "實習"),
-    "motivation": ("motivation", "why", "志望", "応募理由", "动机", "動機"),
     "education": ("education", "studied", "university", "college", "degree", "major", "大学", "学歴", "学历",
                   "學歷", "毕业", "畢業", "卒業", "専攻", "专业", "專業", "学位", "学部", "学校", "學校"),
     "skill": ("skill", "skills", "proficient", "certified", "certification", "スキル", "技術", "技术", "技能",

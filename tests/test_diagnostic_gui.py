@@ -320,12 +320,9 @@ def test_answer_level_is_restored_after_restart():
     try:
         wait_until(app, lambda: window.cloud.provider.isEnabled())
         level = window.cloud.answer_level
-        assert level.currentData() == "N3"
+        assert level.currentData() == "N2"
         assert {level.itemData(i) for i in range(level.count())} == {"N1", "N2", "N3", "N4", "N5"}
         level.setCurrentIndex(level.findData("N1"))
-        window.cloud.answer_mode.setCurrentIndex(window.cloud.answer_mode.findData("keywords_only"))
-        window.cloud.max_keywords.setCurrentIndex(window.cloud.max_keywords.findData(2))
-        window.cloud.show_rescue.setChecked(False)
     finally:
         window.close()
         wait_until(app, lambda: not window.isVisible())
@@ -335,16 +332,13 @@ def test_answer_level_is_restored_after_restart():
     try:
         wait_until(app, lambda: reopened.cloud.provider.isEnabled())
         assert reopened.cloud.answer_level.currentData() == "N1"
-        assert reopened.cloud.answer_mode.currentData() == "keywords_only"
-        assert reopened.cloud.max_keywords.currentData() == 2
-        assert not reopened.cloud.rescue_panel.isVisible()
     finally:
         reopened.close()
         wait_until(app, lambda: not reopened.isVisible())
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
-def test_deepseek_worker_translates_a_question_and_automatically_generates_spoken_cues(monkeypatch):
+def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_statement(monkeypatch):
     import asyncio
     import json
 
@@ -352,7 +346,7 @@ def test_deepseek_worker_translates_a_question_and_automatically_generates_spoke
     from ai_japanese_interview_assistant import live
     from ai_japanese_interview_assistant.answer_format import RubyAnnotation
     from ai_japanese_interview_assistant.config import DEEPSEEK
-    from ai_japanese_interview_assistant.spoken_cues import InterviewAnswer, SpokenLine
+    from ai_japanese_interview_assistant.interview import Answer
 
     async def exercise():
         finished = asyncio.Event()
@@ -360,10 +354,8 @@ def test_deepseek_worker_translates_a_question_and_automatically_generates_spoke
         translations = []
         answers = []
         previews = []
-        statement = "担当業務をどう進めますか。"
-        answer_text = "まず、要件を確認します。"
-        answer_zh = "我会先确认需求。"
-        question_zh = "您会怎样开展工作？"
+        statement = "次に、担当業務についてご説明します。"
+        answer_text = "はい、よろしくお願いします。"
 
         def handle(request):
             assert str(request.url) == DEEPSEEK.url
@@ -372,24 +364,20 @@ def test_deepseek_worker_translates_a_question_and_automatically_generates_spoke
             if payload.get("stream"):
                 assert payload["input"] == statement
                 return httpx.Response(200, text=(
-                    f'data: {{"type":"response.output_text.delta","delta":"{question_zh}"}}\n\n'
+                    'data: {"type":"response.output_text.delta","delta":"接下来我会介绍岗位职责。"}\n\n'
                     'data: {"type":"response.completed"}\n\n'
                 ))
             name = payload["text"]["format"]["name"]
-            if name == "spoken_cue":
-                assert json.loads(payload["input"]) == {"question": statement, "facts": [], "preceding": []}
-                assert "N1" in payload["instructions"]
+            if name == "draft":
+                assert json.loads(payload["input"]) == {"question": statement, "facts": []}
+                assert "JLPT N1" in payload["instructions"]
             elif name == "annotate_answer":
                 assert payload["input"] == answer_text
             structured = {
-                "spoken_intent": {"question": True, "complete": True, "personal": False, "categories": [],
-                                  "question_type": "technical", "confidence": "high"},
-                "spoken_cue": {"question_zh": question_zh, "keywords": ["要件", "確認"],
-                               "opening_ja": answer_text, "opening_zh": answer_zh,
-                               "sentences_ja": [], "sentences_zh": [], "sentence_sources": [""],
-                               "needs_more_context": False},
-                "verify_spoken_cue": {"safe": True},
-                "annotate_answer": {"terms": ["要件"], "labels": ["ようけん"], "contexts": [""], "focus_terms": []},
+                "draft": {"before_ja": answer_text, "before_zh": "好的，请您介绍。",
+                          "after_ja": "", "after_zh": "", "fact_ids": []},
+                "verify_answer": {"safe": True},
+                "annotate_answer": {"terms": ["願"], "labels": ["ねが"], "contexts": [""], "focus_terms": []},
             }[name]
             return httpx.Response(200, json={"status": "completed", "output": [{
                 "type": "message",
@@ -437,75 +425,15 @@ def test_deepseek_worker_translates_a_question_and_automatically_generates_spoke
         worker.answer.connect(on_answer)
         await asyncio.wait_for(worker._main(), 3)
         assert previews == ["次に担当"]
-        assert translations == [question_zh]
+        assert translations == ["接下来我会介绍岗位职责。"]
         row_id = (0, 1, "local-1")
-        offset = answer_text.index("要件")
-        base = (statement, question_zh, "technical", ("要件", "確認"), SpokenLine(answer_text, answer_zh),
-                (), "high", False)
+        offset = answer_text.index("願")
         assert answers == [
-            (row_id, InterviewAnswer(*base)),
-            (row_id, InterviewAnswer(*base, (RubyAnnotation(offset, offset + 2, "ようけん"),))),
+            (row_id, Answer(answer_text, "好的，请您介绍。")),
+            (row_id, Answer(answer_text, "好的，请您介绍。", (RubyAnnotation(offset, offset + 1, "ねが"),))),
         ]
 
     asyncio.run(exercise())
-
-
-@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
-def test_latest_cue_stays_readable_while_current_question_waits(monkeypatch):
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication
-    from ai_japanese_interview_assistant.__main__ import MainWindow
-    from ai_japanese_interview_assistant.cloud_gui import Row
-    from ai_japanese_interview_assistant.live import ANSWER_PENDING, LiveWorker
-    from ai_japanese_interview_assistant.spoken_cues import InterviewAnswer, SpokenLine
-
-    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    app = QApplication.instance() or QApplication([])
-    window = MainWindow()
-    window.show()
-    pane = window.cloud
-    try:
-        older, newest = (1, 1, "old"), (1, 1, "new")
-        cue = InterviewAnswer("経験は？", "有什么经历？", "follow_up", ("設計",),
-                              SpokenLine("設計から始めます。", "我从设计开始。"), (), "high", False)
-        pane.session_id = 1
-        pane.rows[older] = Row(ja=cue.question, finalized=True, answer=cue)
-        pane.rows[newest] = Row(ja="どうしますか？", finalized=True, answer_status=ANSWER_PENDING)
-        pane.mark_changed(newest)
-        pane.render_history()
-        assert pane.cue_keywords.text() == "設計"
-        assert pane.cue_source.isVisible() and cue.question in pane.cue_source.text()
-        assert pane.rescue_panel.isVisible()
-        pane.show_rescue.setChecked(False)
-        assert not pane.rescue_panel.isVisible()
-
-        new = InterviewAnswer("どうしますか？", "您会怎么做？", "technical", ("検証",),
-                              SpokenLine("先に検証します。", "我会先验证。"), (), "high", False)
-        pane.state = "active"
-        pane.add_answer(newest, new, "建议已生成", False)
-        pane.add_answer(older, cue, "建议已生成", False)
-        pane.render_history()
-        assert pane.cue_keywords.text() == "検証"
-        assert not pane.cue_source.isVisible()
-        pane.add_answer(newest, None, "API 请求超时。", False)
-        pane.render_history()
-        assert pane.cue_keywords.text() == "検証"
-        previous_worker = LiveWorker(1, None, "")
-        pane.worker = LiveWorker(2, None, "")
-        previous_worker.answer.connect(pane.add_answer)
-        previous_worker.answer.emit(newest, cue, "建议已生成", False)
-        assert pane.rows[newest].answer == new
-        pane.worker = None
-        pane.compact_toggle.click()
-        assert not pane.history.isVisible()
-        assert window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
-        pane.compact_toggle.click()
-        assert pane.history.isVisible()
-        assert not window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
-    finally:
-        pane.worker = None
-        window.close()
-        wait_until(app, lambda: not window.isVisible())
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")

@@ -86,17 +86,3 @@ def test_revocation_during_classification_prevents_fact_upload():
             "役割は？", automatic=False, facts=facts, allowed=lambda: allowed,
         ))
     assert list(backend.payloads) == ["question"]
-def test_experience_library_supports_internships_motivation_and_other_facts(tmp_path):
-    from ai_japanese_interview_assistant.profiles import Fact, ProfileStore, select_facts
-
-    store = ProfileStore(tmp_path / "facts.json")
-    facts = (
-        Fact("placement", "internship", "試験を手伝いました。", "我协助了测试。", ("試験",)),
-        Fact("motivation", "motivation", "設計に関心があります。", "我对设计感兴趣。"),
-        Fact("extra", "other", "日本語を勉強しています。", "我正在学日语。"),
-        Fact("existing", "experience", "仕様を確認しました。", "我确认了规格。"),
-    )
-    store.save(facts)
-    assert store.load() == facts
-    assert select_facts(facts, "試験について教えてください。", ["experience"]) == (facts[0], facts[3])
-    assert select_facts(facts, "志望理由を教えてください。", ["motivation"]) == (facts[1],)

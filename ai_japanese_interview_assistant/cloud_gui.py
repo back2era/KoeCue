@@ -6,12 +6,12 @@ import os
 
 from PySide6.QtCore import QPoint, QSignalBlocker, QTimer, Signal, Slot, Qt
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QFrame, QGridLayout, QHeaderView, QHBoxLayout, QLabel, QLineEdit, QMenu,
+    QApplication, QCheckBox, QFrame, QHeaderView, QHBoxLayout, QLabel, QLineEdit, QMenu,
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .answer_display import compact_annotations, paragraph_breaks
-from .answer_format import ANSWER_LEVELS
+from .answer_format import ANSWER_LEVELS, DEFAULT_ANSWER_LEVEL
 from .diagnostic import DeviceScan
 from .config import OPENAI, PROVIDERS, QWEN
 from .credentials import credential
@@ -24,8 +24,6 @@ from .profiles import ProfileError
 from .ruby_label import RubyLabel
 from .services import TextService, client_for, error_message
 from .settings import Preferences, load_preferences, save_preferences
-from .spoken_cues import CueOptions, DEFAULT_LEVEL, DEFAULT_MAX_ITEMS, InterviewAnswer, MODES, RESCUE_PHRASES
-from .windows_taskbar import register_window, unregister_window
 
 
 class CaptionLabel(QLabel):
@@ -75,7 +73,7 @@ class Row:
     finalized: bool = False
     asr: str = ""
     translation: str = ""
-    answer: InterviewAnswer | Answer | None = None
+    answer: Answer | None = None
     answer_status: str = ""
 
 
@@ -111,13 +109,7 @@ class CloudPane(QWidget):
         self.displayed_row = None
         self.preview_key = None
         self.preview_text = ""
-        self.queued_preview = None
-        self.preview_timer = QTimer(self)
-        self.preview_timer.setSingleShot(True)
-        self.preview_timer.setInterval(65)
-        self.preview_timer.timeout.connect(self.flush_preview)
         self.dirty = False
-        self.expanded_size = None
 
         self.source = GlassComboBox()
         self.source.setAccessibleName("音频来源")
@@ -132,16 +124,7 @@ class CloudPane(QWidget):
         self.answer_level.setAccessibleName("AI 回答难度")
         for level in ANSWER_LEVELS:
             self.answer_level.addItem(level, level)
-        self.answer_level.setCurrentIndex(self.answer_level.findData(DEFAULT_LEVEL))
-        self.answer_mode = GlassComboBox()
-        self.answer_mode.setAccessibleName("口语提示模式")
-        for mode, label in MODES.items():
-            self.answer_mode.addItem(label, mode)
-        self.answer_mode.setCurrentIndex(self.answer_mode.findData("short"))
-        self.max_keywords = self.cue_limit("最多关键词")
-        self.max_sentences = self.cue_limit("最多短句")
-        self.show_rescue = QCheckBox("始终显示常用救场句")
-        self.show_rescue.setChecked(True)
+        self.answer_level.setCurrentIndex(self.answer_level.findData(DEFAULT_ANSWER_LEVEL))
         self.provider = GlassComboBox()
         self.provider.setAccessibleName("API 服务商")
         for code, provider in PROVIDERS.items():
@@ -175,7 +158,7 @@ class CloudPane(QWidget):
         for action, operation in (("读取已保存的 Key", "read"), ("保存当前 Key", "save"), ("删除已保存的 Key", "delete")):
             vault_menu.addAction(action, lambda checked=False, op=operation: self.use_vault(op))
         self.vault_button.setMenu(vault_menu)
-        self.auto_answer = QCheckBox("自动为完整面试问题生成建议")
+        self.auto_answer = QCheckBox("自动为面试发言生成建议")
         self.auto_answer.setChecked(True)
         self.start = QPushButton("确认并开始云端监听")
         self.pause = QPushButton("暂停")
@@ -214,17 +197,6 @@ class CloudPane(QWidget):
         self.original_state = plain_label("", "captionState")
         self.translation_state = plain_label("", "captionState")
         self.answer_ja = RubyLabel()
-        self.cue_keywords = plain_label("", "cueKeywords")
-        self.cue_source = plain_label("", "muted")
-        self.cue_details = QPushButton("展开说明")
-        self.cue_details.setCheckable(True)
-        self.cue_details.toggled.connect(self.render_answer)
-        self.answer_mode.currentIndexChanged.connect(self.reset_cue_details)
-        self.compact_toggle = QPushButton("紧凑视图")
-        self.compact_toggle.setCheckable(True)
-        self.compact_toggle.toggled.connect(self.toggle_compact)
-        self.rescue_panel = self.build_rescue_panel()
-        self.show_rescue.toggled.connect(self.rescue_panel.setVisible)
         self.answer_zh = plain_label("", "answerTranslation")
         self.answer_zh.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.answer_translation_rule = self.rule()
@@ -335,23 +307,20 @@ class CloudPane(QWidget):
         answer_layout.setContentsMargins(15, 12, 15, 12)
         answer_layout.setSpacing(10)
         answer_heading = QHBoxLayout()
-        answer_heading.addWidget(plain_label("口语提示", "sectionTitle"), 1)
+        answer_heading.addWidget(plain_label("AI 推荐回答", "sectionTitle"), 1)
         answer_heading.addWidget(self.full_annotations)
         answer_layout.addLayout(answer_heading)
-        answer_layout.addWidget(self.cue_source)
-        answer_layout.addWidget(self.cue_keywords)
         answer_layout.addWidget(self.answer_ja)
         answer_layout.addWidget(self.answer_translation_rule)
         answer_layout.addWidget(self.answer_zh)
         answer_layout.addWidget(self.answer_status)
         answer_actions = QHBoxLayout()
         answer_actions.addStretch(1)
-        for button in (self.cue_details, self.retry, self.suggest, self.copy):
+        for button in (self.retry, self.suggest, self.copy):
             answer_actions.addWidget(button)
         answer_layout.addLayout(answer_actions)
         page.addWidget(answer_card)
         page.addStretch(1)
-        layout.addWidget(self.rescue_panel)
         self.splitter.addWidget(live_card)
 
         history_pane = glass_panel()
@@ -380,30 +349,22 @@ class CloudPane(QWidget):
         info.addWidget(self.input_summary)
         info.addWidget(self.status_detail)
         footer.addLayout(info, 1)
-        for button in (self.settings_toggle, self.compact_toggle, self.pause, self.stop, self.start):
+        for button in (self.settings_toggle, self.pause, self.stop, self.start):
             footer.addWidget(button)
         outer.addWidget(bar)
         self.build_settings()
 
     def build_settings(self):
         self.settings = GlassDialog("设置", self)
-        self.settings.resize(650, 600)
+        self.settings.resize(650, 535)
         options = glass_panel()
         option_layout = QVBoxLayout(options)
         option_layout.setContentsMargins(16, 12, 16, 12)
-        for title, selector in (("界面主题", self.theme), ("AI 回答难度", self.answer_level),
-                                ("口语提示模式", self.answer_mode)):
+        for title, selector in (("界面主题", self.theme), ("AI 回答难度", self.answer_level)):
             row = QHBoxLayout()
             row.addWidget(plain_label(title, "sectionTitle"), 1)
             row.addWidget(selector)
             option_layout.addLayout(row)
-        limits = QHBoxLayout()
-        for selector in (self.max_keywords, self.max_sentences):
-            limits.addWidget(plain_label(selector.accessibleName(), "muted"))
-            limits.addWidget(selector)
-        limits.addStretch(1)
-        option_layout.addLayout(limits)
-        option_layout.addWidget(self.show_rescue)
         self.settings.body.addWidget(options)
         card = glass_panel()
         settings = QVBoxLayout(card)
@@ -439,56 +400,6 @@ class CloudPane(QWidget):
         self.settings.body.addWidget(done, 0, Qt.AlignmentFlag.AlignRight)
         for button in self.settings.findChildren(QPushButton):
             button.setAutoDefault(False)
-
-    @staticmethod
-    def cue_limit(name):
-        selector = GlassComboBox()
-        selector.setAccessibleName(name)
-        for value in range(1, DEFAULT_MAX_ITEMS + 1):
-            selector.addItem(str(value), value)
-        selector.setCurrentIndex(selector.findData(DEFAULT_MAX_ITEMS))
-        return selector
-
-    def build_rescue_panel(self):
-        panel = QWidget()
-        grid = QGridLayout(panel)
-        grid.setContentsMargins(2, 0, 2, 0)
-        grid.setHorizontalSpacing(15)
-        grid.setVerticalSpacing(4)
-        grid.addWidget(plain_label("常用救场句", "sectionTitle"), 0, 0, 1, 2)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-        for index, (ja, zh) in enumerate(RESCUE_PHRASES):
-            line = plain_label(f"{ja}\n{zh}", "rescueText")
-            line.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            grid.addWidget(line, index // 2 + 1, index % 2)
-        return panel
-
-    def toggle_compact(self, compact):
-        self.splitter.widget(1).setVisible(not compact)
-        self.compact_toggle.setText("完整视图" if compact else "紧凑视图")
-        window = self.window()
-        if compact:
-            self.expanded_size = window.size()
-            window.resize(620, max(660, min(window.height(), 740)))
-            self.select_latest()
-        elif self.expanded_size is not None:
-            window.resize(self.expanded_size)
-            self.expanded_size = None
-        taskbar_handle = getattr(window, "taskbar_handle", None)
-        if taskbar_handle is not None:
-            unregister_window(taskbar_handle)
-        visible = window.isVisible()
-        window.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, compact)
-        if visible:
-            window.show()
-        if taskbar_handle is not None:
-            window.taskbar_handle = register_window(window)
-
-    def reset_cue_details(self):
-        with QSignalBlocker(self.cue_details):
-            self.cue_details.setChecked(self.answer_mode.currentData() == "structured")
-        self.render_answer()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -678,7 +589,7 @@ class CloudPane(QWidget):
         self.theme.setEnabled(self.preferences_ready and not self.closing)
         self.answer_level.setEnabled(self.preferences_ready and not self.closing)
         for widget in (self.source, self.refresh, self.provider, self.model, self.workspace, self.key,
-                       self.vault_button, self.auto_answer, self.answer_mode, self.max_keywords, self.max_sentences):
+                       self.vault_button, self.auto_answer):
             widget.setEnabled(configurable)
         profile_state = (
             configurable, self.approved_personal, len(self.approved_facts), self.selected_provider().label, self.state,
@@ -710,7 +621,7 @@ class CloudPane(QWidget):
         self.retry.setEnabled(bool(self.can_send_row(key) and retryable))
         self.suggest.setEnabled(bool(self.can_send_row(key) and row and row.finalized and
                                      row.ja and row.answer_status != ANSWER_PENDING))
-        self.copy.setEnabled(self.visible_answer(key, row) is not None)
+        self.copy.setEnabled(bool(row and row.answer))
         self.latest.setEnabled(bool(self.rendered))
         self.refresh_status()
 
@@ -756,10 +667,9 @@ class CloudPane(QWidget):
                                  session_id=self.session_id, auto_answer=self.auto_answer.isChecked(),
                                  facts=self.approved_facts, personal_info=self.approved_personal,
                                  provider=self.selected_provider(), answer_level=self.answer_level.currentData(),
-                                 model=self.selected_model(), workspace=self.workspace.text().strip(),
-                                 cue_options=self.selected_cue_options())
+                                 model=self.selected_model(), workspace=self.workspace.text().strip())
         self.worker.status.connect(self.set_status)
-        self.worker.partial_transcript.connect(self.queue_preview)
+        self.worker.partial_transcript.connect(self.add_partial_transcript)
         self.worker.transcript.connect(self.add_transcript)
         self.worker.order.connect(self.set_order)
         self.worker.translation.connect(self.add_translation)
@@ -834,8 +744,6 @@ class CloudPane(QWidget):
             self.preview_card.show()
 
     def clear_live_caption(self):
-        self.queued_preview = None
-        self.preview_timer.stop()
         self.preview_key, self.preview_text = None, ""
         self.live_caption.clear()
         self.preview_card.hide()
@@ -865,7 +773,7 @@ class CloudPane(QWidget):
         self.dirty = True
 
     def add_translation(self, key, text, state):
-        if self.state != "active" or key not in self.rows or not self.current_worker_result():
+        if self.state != "active" or key not in self.rows:
             return
         row = self.rows[key]
         row.zh, row.translation = text, state
@@ -874,16 +782,10 @@ class CloudPane(QWidget):
     @Slot(object, object, str, bool)
     def add_answer(self, key, answer, state, scoped):
         shared = self.approved_facts or self.approved_personal
-        if self.can_send_row(key) and key in self.rows and self.current_worker_result() and (not scoped or shared):
+        if self.can_send_row(key) and key in self.rows and (not scoped or shared):
             row = self.rows[key]
-            if answer is not None:
-                row.answer = answer
-            row.answer_status = state
+            row.answer, row.answer_status = answer, state
             self.mark_changed(key)
-
-    def current_worker_result(self):
-        sender = self.sender()
-        return not isinstance(sender, LiveWorker) or sender is self.worker
 
     def current_row(self):
         index = self.history.currentRow()
@@ -906,10 +808,9 @@ class CloudPane(QWidget):
             self.worker.dispatch(self.worker.start_answer, key, row.ja)
 
     def copy_answer(self):
-        answer = self.visible_answer(*self.current_row())
-        if answer:
-            content = f"{answer.ja}\n\n{answer.zh}" if answer.ja else "・".join(answer.keywords)
-            QApplication.clipboard().setText(content)
+        _, row = self.current_row()
+        if row and row.answer:
+            QApplication.clipboard().setText(f"{row.answer.ja}\n\n{row.answer.zh}")
 
     def open_profile(self):
         dialog = ProfileDialog(self.approved_facts, self.window())
@@ -994,10 +895,6 @@ class CloudPane(QWidget):
         self.auto_answer.setChecked(preferences.auto_answer)
         self.theme.setCurrentIndex(self.theme.findData(preferences.theme))
         self.answer_level.setCurrentIndex(self.answer_level.findData(preferences.answer_level))
-        self.answer_mode.setCurrentIndex(self.answer_mode.findData(preferences.cue_options.mode))
-        self.max_keywords.setCurrentIndex(self.max_keywords.findData(preferences.cue_options.max_keywords))
-        self.max_sentences.setCurrentIndex(self.max_sentences.findData(preferences.cue_options.max_sentences))
-        self.show_rescue.setChecked(preferences.show_rescue_phrases)
         self.restore_audio_source()
 
     def persist_preferences(self):
@@ -1008,7 +905,6 @@ class CloudPane(QWidget):
             self.answer_level.currentData(),
             tuple((code, self.model_choices[code]) for code in PROVIDERS if code in self.model_choices),
             self.workspace.text().strip(),
-            self.selected_cue_options(), self.show_rescue.isChecked(),
         )
         changed = preferences != self.preferences
         key = self.key.text().strip() if self.key.isModified() else ""
@@ -1024,9 +920,6 @@ class CloudPane(QWidget):
             return preferences
 
         self.run_settings_io(save, self.preferences_saved)
-
-    def selected_cue_options(self):
-        return CueOptions(self.answer_mode.currentData(), self.max_keywords.currentData(), self.max_sentences.currentData())
 
     @Slot(object)
     def preferences_saved(self, preferences):
@@ -1091,7 +984,7 @@ class CloudPane(QWidget):
         else:
             scroll.setValue(positions.get(top_row, position))
         self.history.blockSignals(False)
-        if target != selected or target in changed or (following_latest and changed):
+        if target != selected or target in changed:
             self.select_row()
 
     def select_row(self):
@@ -1100,13 +993,8 @@ class CloudPane(QWidget):
         if changed:
             with QSignalBlocker(self.full_annotations):
                 self.full_annotations.setChecked(False)
-            with QSignalBlocker(self.cue_details):
-                self.cue_details.setChecked(self.answer_mode.currentData() == "structured")
         animate = bool(self.can_send_row(key) and self.rendered and key == self.rendered[-1])
-        chinese = row.zh if row else ""
-        if not chinese and row and isinstance(row.answer, InterviewAnswer):
-            chinese = row.answer.question_zh
-        for widget, value in ((self.original, row.ja if row else ""), (self.translated, chinese)):
+        for widget, value in ((self.original, row.ja if row else ""), (self.translated, row.zh if row else "")):
             if changed:
                 widget.set_caption("", animate=False)
             widget.set_caption(value, animate=animate and widget is self.translated)
@@ -1117,30 +1005,9 @@ class CloudPane(QWidget):
         self.render_answer()
         self.controls()
 
-    def visible_answer(self, key, row):
-        if row and row.answer:
-            return row.answer
-        if key and self.rendered and key == self.rendered[-1]:
-            for index in range(len(self.rendered) - 2, -1, -1):
-                earlier = self.rendered[index]
-                if earlier[0] != key[0]:
-                    break
-                if self.rows[earlier].answer:
-                    return self.rows[earlier].answer
-        return None
-
     def render_answer(self):
-        key, row = self.current_row()
-        answer = self.visible_answer(key, row)
-        cue = answer if isinstance(answer, InterviewAnswer) else None
-        self.cue_keywords.setText("  ·  ".join(cue.keywords) if cue else "")
-        self.cue_keywords.setVisible(cue is not None)
-        previous = bool(cue and row and cue is not row.answer)
-        self.cue_source.setText(f"上一条提示 · {cue.question}\n{cue.question_zh}" if previous else "")
-        self.cue_source.setVisible(previous)
-        details = self.cue_details.isChecked()
-        self.cue_details.setVisible(bool(cue and cue.zh))
-        self.cue_details.setText("收起说明" if details else "展开说明")
+        _, row = self.current_row()
+        answer = row.answer if row else None
         if answer:
             compact = compact_annotations(answer.ja, answer.annotations, answer.highlights)
             expanded = self.full_annotations.isChecked()
@@ -1148,39 +1015,20 @@ class CloudPane(QWidget):
             self.full_annotations.setText("收起标注" if expanded else "全部标注")
             self.answer_ja.set_answer(
                 answer.ja, answer.annotations if expanded else compact,
-                highlights=answer.highlights, paragraph_breaks=() if cue else paragraph_breaks(answer.ja),
+                highlights=answer.highlights, paragraph_breaks=paragraph_breaks(answer.ja),
             )
         else:
             self.full_annotations.hide()
-            placeholder = ("识别到完整的面试问题后会自动准备提示。" if self.auto_answer.isChecked()
+            placeholder = ("每段发言识别完成后会自动生成日语回应建议。" if self.auto_answer.isChecked()
                            else "选中字幕后可生成日语参考回答。")
             self.answer_ja.set_answer(placeholder)
-        self.answer_ja.setVisible(not cue or bool(cue.ja))
         self.answer_zh.setText(answer.zh if answer else "")
-        show_translation = bool(answer and answer.zh and (not cue or details))
+        show_translation = bool(answer and answer.zh)
         self.answer_translation_rule.setVisible(show_translation)
         self.answer_zh.setVisible(show_translation)
         answer_status = row.answer_status if row else ""
-        if cue and cue.needs_more_context and not previous and answer_status in {"", "建议已生成"}:
-            answer_status = "请确认问题或补充真实经历后再使用。"
         self.answer_status.setText(answer_status)
         self.answer_status.setVisible(bool(answer_status))
-
-    @Slot(object)
-    def queue_preview(self, data):
-        if not self.current_worker_result():
-            return
-        if self.preview_timer.isActive():
-            self.queued_preview = data
-        else:
-            self.add_partial_transcript(data)
-            self.preview_timer.start()
-
-    def flush_preview(self):
-        if self.queued_preview is not None:
-            data, self.queued_preview = self.queued_preview, None
-            self.add_partial_transcript(data)
-            self.preview_timer.start()
 
     def shutdown(self):
         if not self.closing:
