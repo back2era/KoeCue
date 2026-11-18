@@ -1,7 +1,7 @@
 """Local résumé and interview context editor with explicit session sharing."""
 from pathlib import Path
 
-from PySide6.QtCore import Signal, Slot, Qt
+from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import (
     QBoxLayout, QCheckBox, QFileDialog, QFrame, QHBoxLayout, QLineEdit, QPlainTextEdit, QPushButton,
     QScrollArea, QVBoxLayout, QWidget,
@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
 from .glass import glass_panel, plain_label
 from .personal import MAX_BACKGROUND, MAX_FIELD, MAX_RESUME, MAX_SCENARIO, PersonalInfo, PersonalStore, import_resume
 from .profile_gui import PrivateIO
-from .themes import GAP, GUTTER, INSET
 
 
 class PersonalPane(QWidget):
@@ -51,7 +50,7 @@ class PersonalPane(QWidget):
         self.listening_status = plain_label("", "muted")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(GUTTER, GUTTER, GUTTER, INSET)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
         header = QHBoxLayout()
         header.addWidget(plain_label("个人信息", "pageTitle"), 1)
@@ -61,7 +60,6 @@ class PersonalPane(QWidget):
         scroll.setObjectName("captionScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         layout.addWidget(scroll, 1)
         content = QWidget()
         content.setObjectName("captionContent")
@@ -98,32 +96,27 @@ class PersonalPane(QWidget):
         self.fields_layout.setStretch(0, 3)
         self.fields_layout.setStretch(1, 2)
 
-        sharing = self.section(page, "回答与资料授权")
+        page.addStretch(1)
+        save_bar = glass_panel("glassBar")
+        save_layout = QHBoxLayout(save_bar)
+        save_layout.setContentsMargins(16, 9, 12, 9)
+        save_layout.addWidget(self.status, 1)
+        save_layout.addWidget(self.save)
+        layout.addWidget(save_bar)
+
+        sharing = self.section(layout, "回答与资料授权")
         row = QHBoxLayout()
         row.addWidget(self.auto_answer, 1)
         row.addWidget(self.facts)
         sharing.addLayout(row)
         sharing.addWidget(self.sharing_status)
-        self.share_actions = QBoxLayout(QBoxLayout.Direction.LeftToRight)
-        checkboxes = QHBoxLayout()
-        checkboxes.addWidget(self.share_background)
-        checkboxes.addWidget(self.share_scenario)
-        checkboxes.addStretch(1)
-        self.share_actions.addLayout(checkboxes, 1)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(self.revoke)
-        buttons.addWidget(self.share)
-        self.share_actions.addLayout(buttons)
-        sharing.addLayout(self.share_actions)
-        page.addStretch(1)
-
-        save_bar = glass_panel("formFooter")
-        save_layout = QHBoxLayout(save_bar)
-        save_layout.setContentsMargins(0, GAP, 0, 0)
-        save_layout.addWidget(self.status, 1)
-        save_layout.addWidget(self.save)
-        layout.addWidget(save_bar)
+        actions = QHBoxLayout()
+        actions.addWidget(self.share_background)
+        actions.addWidget(self.share_scenario)
+        actions.addStretch(1)
+        actions.addWidget(self.revoke)
+        actions.addWidget(self.share)
+        sharing.addLayout(actions)
 
         self.import_button.clicked.connect(self.choose_resume)
         self.clear_resume.clicked.connect(self.resume.clear)
@@ -144,10 +137,6 @@ class PersonalPane(QWidget):
             else QBoxLayout.Direction.TopToBottom
         )
         self.fields_layout.setDirection(direction)
-        self.share_actions.setDirection(
-            QBoxLayout.Direction.LeftToRight if event.size().width() >= 740
-            else QBoxLayout.Direction.TopToBottom
-        )
 
     @staticmethod
     def editor(name, placeholder, height):
@@ -169,8 +158,8 @@ class PersonalPane(QWidget):
     def section(parent_layout, title):
         card = glass_panel()
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(INSET, 12, INSET, 12)
-        layout.setSpacing(GAP)
+        layout.setContentsMargins(16, 13, 16, 13)
+        layout.setSpacing(8)
         layout.addWidget(plain_label(title, "sectionTitle"))
         parent_layout.addWidget(card)
         return layout

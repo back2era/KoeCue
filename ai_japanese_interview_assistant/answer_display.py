@@ -5,14 +5,6 @@ import re
 _SENTENCE_END = re.compile(r"[。！？!?]+[」』）】》”’]*[ \t]*")
 
 
-def preview_end(text, sentence_limit=3):
-    for count, sentence in enumerate(_SENTENCE_END.finditer(text), 1):
-        if count == sentence_limit:
-            end = sentence.end()
-            return end if text[end:].strip() else len(text)
-    return len(text)
-
-
 def compact_annotations(text, annotations, highlights):
     matching = tuple(
         annotation for annotation in annotations

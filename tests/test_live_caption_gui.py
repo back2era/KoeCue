@@ -32,7 +32,7 @@ def test_provisional_captions_can_correct_words_without_changing_history(monkeyp
         cloud.add_partial_transcript((key, TranscriptPart("current", "日本で")))
         assert cloud.live_caption.isVisible()
         assert cloud.live_caption.text() == "日本で"
-        assert cloud.history.count() == 1
+        assert cloud.history.rowCount() == 1
         assert cloud.original.target == "前の発言"
         cloud.add_partial_transcript((key, TranscriptPart("current", "日本ではたらく")))
         cloud.add_partial_transcript((key, TranscriptPart("current", "日本では働く")))
@@ -42,12 +42,12 @@ def test_provisional_captions_can_correct_words_without_changing_history(monkeyp
         cloud.add_transcript((key, TranscriptPart("current", "日本で働く理由", final=True)))
         cloud.render_history()
         assert not cloud.live_caption.isVisible()
-        assert cloud.history.count() == 2
+        assert cloud.history.rowCount() == 2
         assert cloud.original.text() == "日本で働く理由"
         cloud.add_partial_transcript(((3, 2, "next"), TranscriptPart("next", "次の発言")))
         cloud.stop_session()
         assert not cloud.live_caption.isVisible()
-        assert cloud.history.count() == 2
+        assert cloud.history.rowCount() == 2
     finally:
         window.close()
         deadline = monotonic() + 5

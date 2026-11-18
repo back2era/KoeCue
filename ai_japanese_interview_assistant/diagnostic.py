@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
 from .audio import AudioBuffer, AudioError, capture, check_topology, list_devices, pcm_level
 from .glass import GlassComboBox, glass_panel, plain_label
 from .telemetry import Event, record
-from .themes import GAP, GUTTER, INSET
 
 
 class DeviceScan(QThread):
@@ -108,13 +107,12 @@ class DiagnosticPane(QWidget):
         self.meter.setValue(0)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(GUTTER, GUTTER, GUTTER, GUTTER)
-        layout.setSpacing(INSET)
-        layout.addWidget(plain_label("音频诊断", "pageTitle"))
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
         source = glass_panel()
         source_layout = QVBoxLayout(source)
-        source_layout.setContentsMargins(INSET, INSET, INSET, INSET)
-        source_layout.setSpacing(GAP)
+        source_layout.setContentsMargins(20, 17, 20, 17)
+        source_layout.setSpacing(11)
         source_layout.addWidget(plain_label("音频来源", "sectionTitle"))
         source_layout.addWidget(plain_label("回环会读取所选播放设备上的混音。此页面仅显示本地电平与帧数。", "muted"))
         row = QHBoxLayout()
@@ -124,10 +122,10 @@ class DiagnosticPane(QWidget):
         source_layout.addWidget(self.consent)
         layout.addWidget(source)
 
-        signal_card = glass_panel("formFooter")
+        signal_card = glass_panel()
         signal_layout = QVBoxLayout(signal_card)
-        signal_layout.setContentsMargins(0, INSET, 0, 0)
-        signal_layout.setSpacing(GAP)
+        signal_layout.setContentsMargins(20, 17, 20, 17)
+        signal_layout.setSpacing(13)
         meter_header = QHBoxLayout()
         meter_header.addWidget(plain_label("输入电平", "sectionTitle"), 1)
         meter_header.addWidget(self.count)

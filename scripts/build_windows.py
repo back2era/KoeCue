@@ -137,7 +137,7 @@ def verify(release, work):
     checks = json.loads(report.read_text(encoding="utf-8"))
     if (result.returncode != 0 or checks.get("version") != APP_VERSION or not checks.get("bundled_model")
             or not checks.get("local_inference") or checks.get("qt_platform") != "windows"
-            or checks.get("main_window_tabs") != 3 or not checks.get("compact_window")):
+            or checks.get("main_window_tabs") != 3):
         raise SystemExit(f"Packaged application failed its check:\n{json.dumps(checks, ensure_ascii=False, indent=2)}")
     print(f"Package check: {json.dumps(checks, ensure_ascii=False)}")
 

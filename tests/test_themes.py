@@ -30,7 +30,7 @@ def test_switching_theme_updates_open_windows_and_new_dialogs(app):
     try:
         canvas = opened.findChild(glass.GlassCanvas)
         label = opened.findChild(glass.QLabel, "pageTitle")
-        assert canvas.grab().toImage().pixelColor(0, 0).name() == glass.THEMES["black"].backdrop
+        assert canvas.grab().toImage().pixelColor(0, 0).name() == "#000000"
         dark_ink = label.palette().color(QPalette.ColorRole.WindowText)
 
         glass.apply_theme(app, "glacier")
@@ -50,7 +50,7 @@ def test_switching_theme_updates_open_windows_and_new_dialogs(app):
         opened.close()
 
 
-def test_five_themes_have_distinct_rendered_backdrops_and_default_is_graphite(app):
+def test_five_themes_have_distinct_rendered_backdrops(app):
     from ai_japanese_interview_assistant import glass
 
     canvas = glass.GlassCanvas()
@@ -64,7 +64,6 @@ def test_five_themes_have_distinct_rendered_backdrops_and_default_is_graphite(ap
             corner_colors.append(canvas.grab().toImage().pixelColor(0, 0).name())
         assert len(set(corner_colors)) == 5
         glass.apply_theme(app, "unknown")
-        assert app.property("interviewTheme") == "graphite"
-        assert canvas.grab().toImage().pixelColor(0, 0).name() == "#111216"
+        assert canvas.grab().toImage().pixelColor(0, 0).name() == "#000000"
     finally:
         canvas.close()
