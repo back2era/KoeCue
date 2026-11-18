@@ -25,8 +25,10 @@ QLabel#appTitle { font-size: 16px; font-weight: 650; }
 QLabel#pageTitle { font-size: ${title}px; font-weight: 600; }
 QLabel#sectionTitle { font-size: ${body}px; font-weight: 600; }
 QLabel#eyebrow, QLabel#muted, QLabel#captionState { color: $secondary; font-size: ${small}px; }
+QLabel#captionState[tone="error"] { color: $danger; }
 QLabel#captionText { font-size: ${caption}px; }
 QLabel#translatedCaption, QLabel#answerTranslation { color: $secondary; font-size: ${body}px; }
+QLabel#compactRescue { font-size: ${body}px; }
 QLabel#answerText { font-size: ${answer}px; }
 QLabel#answerText[empty="true"] { color: $secondary; }
 QLabel#listeningBadge { color: $secondary; font-size: ${small}px; }
@@ -44,6 +46,7 @@ QFrame#toolbar, QFrame#sessionBar { background: $surface; }
 QFrame#toolbar { border-bottom: 1px solid $border; }
 QFrame#sessionBar { border-top: 1px solid $border; }
 QFrame#historyPane { background: $surface; }
+QFrame#formFooter { border-top: 1px solid $border; }
 QFrame#answerCard, QFrame#glassInset { background: $surface; border-radius: ${panel_radius}px; }
 QFrame#captionRule { background: $border; border: none; }
 QPushButton, QComboBox, QLineEdit {
@@ -122,7 +125,7 @@ QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::su
     background: transparent; width: 0; height: 0;
 }
 QProgressBar {
-    background: $backdrop; border: none; border-radius: 4px; min-height: 8px; max-height: 8px;
+    background: $elevated; border: none; border-radius: 4px; min-height: 8px; max-height: 8px;
 }
 QProgressBar::chunk { background: $success; border-radius: 4px; }
 QToolTip { background: $surface; color: $text; border: 1px solid $border; padding: 5px; }
@@ -326,7 +329,8 @@ class IconButton(QPushButton):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.translate(8, 8)
         theme = active_theme()
-        pen = QPen(QColor(theme.accent if self.isChecked() else theme.secondary))
+        ink = theme.accent if self.isChecked() else theme.secondary
+        pen = QPen(QColor(ink if self.isEnabled() else theme.disabled))
         pen.setWidthF(1.35)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)

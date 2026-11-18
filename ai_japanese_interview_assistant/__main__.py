@@ -3,6 +3,7 @@ import sys
 import os
 from pathlib import Path
 
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFontDatabase, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QHBoxLayout, QMainWindow, QPushButton, QStackedWidget,
@@ -11,11 +12,14 @@ from PySide6.QtWidgets import (
 
 from . import APP_NAME
 from .cloud_gui import CloudPane
+from .compact import COMPACT_SHORTCUT, CompactShortcut, CompactWindow
 from .diagnostic import DiagnosticPane
 from .glass import (
-    DEFAULT_THEME, BrandMark, GlassCanvas, GlassStyle, PageFade, application_icon, apply_theme, glass_panel, plain_label,
+    DEFAULT_THEME, BrandMark, GlassCanvas, GlassStyle, IconButton, PageFade, application_icon,
+    apply_theme, glass_panel, plain_label,
 )
 from .personal_gui import PersonalPane
+from .themes import GAP, INSET, TEXT_BODY, UI_FONTS
 from .windows_taskbar import register_process, register_window, unregister_window
 
 
@@ -25,29 +29,32 @@ class MainWindow(QMainWindow):
         self.closing = False
         self.taskbar_handle = None
         self.setWindowTitle(APP_NAME)
-        self.resize(1120, 740)
-        self.setMinimumSize(620, 540)
+        self.setMinimumSize(620, 500)
+        default_size = QSize(1120, 740)
+        if QApplication.platformName() == "windows":
+            available = self.screen().availableGeometry().size()
+            default_size = default_size.boundedTo(available - QSize(24, 64))
+        self.resize(default_size)
         canvas = GlassCanvas()
         layout = QVBoxLayout(canvas)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(13)
-        header = QHBoxLayout()
-        header.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        toolbar = glass_panel("toolbar")
+        header = QHBoxLayout(toolbar)
+        header.setContentsMargins(INSET, GAP, INSET, GAP)
+        header.setSpacing(GAP)
         header.addWidget(BrandMark())
-        header.addWidget(plain_label(APP_NAME, "appTitle"), 1)
-        nav = glass_panel("glassBar")
-        nav_layout = QHBoxLayout(nav)
-        nav_layout.setContentsMargins(4, 4, 4, 4)
-        nav_layout.setSpacing(3)
+        header.addWidget(plain_label(APP_NAME, "appTitle"))
+        header.addStretch(1)
         self.navigation = QButtonGroup(self)
         for index, title in enumerate(("实时面试", "音频诊断", "个人信息")):
             button = QPushButton(title)
             button.setProperty("nav", True)
             button.setCheckable(True)
             self.navigation.addButton(button, index)
-            nav_layout.addWidget(button)
-        header.addWidget(nav)
-        layout.addLayout(header)
+            header.addWidget(button)
+        header.addStretch(1)
+        layout.addWidget(toolbar)
         self.tabs = QStackedWidget()
         self.diagnostic = DiagnosticPane(self)
         self.diagnostic.idle.connect(self.retry_close)
@@ -56,6 +63,15 @@ class MainWindow(QMainWindow):
         self.cloud.theme_changed.connect(lambda theme_id: apply_theme(QApplication.instance(), theme_id))
         self.cloud.idle.connect(self.retry_close)
         self.cloud.idle.connect(self.sync_audio_controls)
+        header.addWidget(self.cloud.history_toggle)
+        self.compact_button = IconButton("window", "面试小窗")
+        self.compact_button.setCheckable(True)
+        self.compact_button.clicked.connect(self.toggle_compact)
+        header.addWidget(self.compact_button)
+        header.addWidget(self.cloud.settings_toggle)
+        self.compact = CompactWindow(self.cloud, self)
+        self.compact.visibility_changed.connect(self.compact_button.setChecked)
+        self.compact.main_requested.connect(self.show_main)
         self.personal = PersonalPane(self.cloud.auto_answer, self.cloud.open_profile, self)
         self.personal.idle.connect(self.retry_close)
         self.personal.authorized.connect(self.cloud.set_approved_personal)
@@ -74,13 +90,45 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self.change_page)
         layout.addWidget(self.tabs, 1)
         self.setCentralWidget(canvas)
+        self.compact_shortcut = CompactShortcut(self)
+        shortcut_tip = COMPACT_SHORTCUT
+        if not self.compact_shortcut.registered:
+            shortcut = QShortcut(QKeySequence(COMPACT_SHORTCUT), self)
+            shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            shortcut.activated.connect(self.toggle_compact)
+            shortcut_tip += " · KoeCue 内"
+        self.compact_button.setToolTip(f"显示或隐藏面试小窗（{shortcut_tip}）")
+
+    def nativeEvent(self, event_type, message):
+        shortcut = getattr(self, "compact_shortcut", None)
+        if shortcut is not None and shortcut.matches(event_type, message):
+            self.toggle_compact()
+            return True, 0
+        return super().nativeEvent(event_type, message)
 
     def cycle_page(self, step):
         self.tabs.setCurrentIndex((self.tabs.currentIndex() + step) % self.tabs.count())
 
+    def toggle_compact(self):
+        if self.closing or self.cloud.confirmation is not None:
+            self.compact_button.setChecked(self.compact.isVisible())
+        elif self.compact.isVisible():
+            self.compact.hide()
+        else:
+            self.compact.show_overlay()
+
+    def show_main(self):
+        self.compact.hide()
+        if self.isMinimized():
+            self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
     def change_page(self, index):
         self.navigation.button(index).setChecked(True)
         current = self.tabs.widget(index)
+        self.cloud.history_toggle.setEnabled(current is self.cloud)
         if current is not self.cloud:
             self.cloud.settings_toggle.setChecked(False)
         if current is self.diagnostic and self.cloud.state != "idle":
@@ -102,10 +150,12 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.closing = True
+        self.compact.hide()
         diagnostic_idle = self.diagnostic.shutdown()
         cloud_idle = self.cloud.shutdown()
         personal_idle = self.personal.shutdown()
         if diagnostic_idle and cloud_idle and personal_idle:
+            self.compact_shortcut.release()
             if self.taskbar_handle is not None:
                 unregister_window(self.taskbar_handle)
                 self.taskbar_handle = None
@@ -123,8 +173,8 @@ def configure_application(app):
         if family not in QFontDatabase.families() and (fonts / file).is_file():
             QFontDatabase.addApplicationFont(str(fonts / file))
     font = app.font()
-    font.setFamilies(["Inter", "Microsoft YaHei UI", "Yu Gothic UI", "Segoe UI"])
-    font.setPointSize(10)
+    font.setFamilies(list(UI_FONTS))
+    font.setPixelSize(TEXT_BODY)
     app.setFont(font)
     apply_theme(app, DEFAULT_THEME)
 

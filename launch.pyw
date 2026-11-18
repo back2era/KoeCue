@@ -24,12 +24,17 @@ def verify_installation(report):
         window = MainWindow()
         window.show()
         app.processEvents()
+        window.toggle_compact()
+        app.processEvents()
+        compact_visible = window.compact.isVisible()
+        window.toggle_compact()
         devices = list_devices()
         decode = load_decoder()
         decode(bytes(48000))
         model = decoder_model_directory()
         result = {"version": APP_VERSION, "qt_platform": app.platformName(), "devices": len(devices),
                   "main_window_tabs": window.tabs.count(),
+                  "compact_window": compact_visible and window.compact.isHidden(),
                   "bundled_model": model.is_relative_to(Path(sys.executable).parent),
                   "local_inference": True}
     except Exception:

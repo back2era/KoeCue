@@ -4,10 +4,13 @@ from dataclasses import dataclass
 from PySide6.QtCore import QSettings
 
 from . import APP_NAME
-from .answer_format import ANSWER_LEVELS, DEFAULT_ANSWER_LEVEL
+from .answer_format import ANSWER_LEVELS
 from .config import PROVIDERS
 from .glass import DEFAULT_THEME, THEMES
 from .profiles import ProfileError, app_directory
+
+
+DEFAULT_INTERVIEW_LEVEL = "N3"
 
 
 @dataclass(frozen=True)
@@ -17,7 +20,7 @@ class Preferences:
     audio_loopback: bool = False
     auto_answer: bool = True
     theme: str = DEFAULT_THEME
-    answer_level: str = DEFAULT_ANSWER_LEVEL
+    answer_level: str = DEFAULT_INTERVIEW_LEVEL
     model_choices: tuple[tuple[str, str], ...] = ()
     qwen_workspace: str = ""
 
@@ -30,7 +33,7 @@ def load_preferences():
     store = _store()
     provider = store.value("provider", "openai", type=str)
     theme = store.value("appearance/theme", DEFAULT_THEME, type=str)
-    answer_level = store.value("answer/level", DEFAULT_ANSWER_LEVEL, type=str)
+    answer_level = store.value("answer/level", DEFAULT_INTERVIEW_LEVEL, type=str)
     model_choices = tuple(
         (code, model) for code in PROVIDERS
         if (model := store.value(f"api/models/{code}", "", type=str).strip())
@@ -41,7 +44,7 @@ def load_preferences():
         audio_loopback=store.value("audio/loopback", False, type=bool),
         auto_answer=store.value("auto_answer", True, type=bool),
         theme=theme if theme in THEMES else DEFAULT_THEME,
-        answer_level=answer_level if answer_level in ANSWER_LEVELS else DEFAULT_ANSWER_LEVEL,
+        answer_level=answer_level if answer_level in ANSWER_LEVELS else DEFAULT_INTERVIEW_LEVEL,
         model_choices=model_choices,
         qwen_workspace=store.value("api/qwen_workspace", "", type=str).strip(),
     )

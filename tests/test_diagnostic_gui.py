@@ -71,7 +71,6 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
         assert cloud.key.text() == ""
         assert cloud.api_key() == "test-deepseek"
         assert cloud.auto_answer.isChecked()
-        assert "DeepSeek" in cloud.capture_notice.text() and "音频在本机" in cloud.capture_notice.text()
         assert "本地" in cloud.start.text()
 
         cloud.session_id = 2
@@ -94,7 +93,7 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
 def test_live_start_is_ready_after_saving_settings_and_requires_an_explicit_click(monkeypatch):
     from PySide6.QtTest import QTest
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QDialogButtonBox, QLabel
     from ai_japanese_interview_assistant.__main__ import MainWindow
     from ai_japanese_interview_assistant.audio import Device
     from ai_japanese_interview_assistant.diagnostic import DeviceScan
@@ -122,30 +121,40 @@ def test_live_start_is_ready_after_saving_settings_and_requires_an_explicit_clic
         assert starts == []
         assert pane.worker is None
         assert pane.start.isEnabled()
-        assert pane.start.text() == "确认并开始本地转写"
-        assert pane.capture_notice.isVisible()
-        assert "音频在本机转写" in pane.capture_notice.text()
-        assert "DeepSeek" in pane.capture_notice.text()
+        assert pane.start.text() == "开始本地转写"
+        assert pane.confirmation is None
 
         pane.start.click()
+        assert starts == []
+        consent = pane.confirmation
+        assert consent.isVisible()
+        notice = " ".join(label.text() for label in consent.findChildren(QLabel))
+        assert "音频在本机转写" in notice and "DeepSeek" in notice and device.name in notice
+        consent.reject()
+        assert starts == []
+        pane.start.click()
+        buttons = pane.confirmation.findChild(QDialogButtonBox)
+        next(button for button in buttons.buttons() if buttons.buttonRole(button) == buttons.ButtonRole.AcceptRole).click()
         wait_until(app, lambda: pane.settings_worker is None)
         assert starts == [(1, device)]
         assert pane.state == "active"
+        assert pane.pause.isVisible() and pane.stop.isVisible() and pane.start.isHidden()
         pane.pause.click()
         assert pane.start.text() == "恢复本地转写"
-        assert not pane.capture_notice.isVisible()
+        assert pane.pause.isHidden() and pane.stop.isVisible()
         pane.start.click()
+        pane.confirmation.accept()
         assert starts == [(1, device), (1, device)]
         pane.stop.click()
-        assert pane.capture_notice.isVisible()
-        assert pane.start.text() == "确认并开始本地转写"
+        assert pane.stop.isHidden()
+        assert pane.start.text() == "开始本地转写"
     finally:
         window.close()
         wait_until(app, lambda: not window.isVisible())
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
-def test_glass_layout_keeps_history_visible_and_settings_in_sync():
+def test_desktop_layout_keeps_history_visible_and_settings_in_sync():
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
@@ -164,7 +173,7 @@ def test_glass_layout_keeps_history_visible_and_settings_in_sync():
         assert cloud.splitter.orientation() == Qt.Orientation.Horizontal
         cloud.settings_toggle.click()
         assert cloud.settings.isVisible()
-        assert cloud.history.isVisible() and cloud.stop.isVisible()
+        assert cloud.history.isVisible() and cloud.start.isVisible()
         assert not cloud.settings.grab().isNull()
         cloud.settings.reject()
         assert not cloud.settings_toggle.isChecked()
@@ -177,9 +186,27 @@ def test_glass_layout_keeps_history_visible_and_settings_in_sync():
         window.resize(790, 730)
         app.processEvents()
         assert cloud.splitter.orientation() == Qt.Orientation.Vertical
-        assert cloud.history.isVisible() and cloud.stop.isVisible()
+        assert cloud.history.isVisible() and cloud.start.isVisible()
         scroll = cloud.history.verticalScrollBar()
         assert scroll.maximum() > 0 and scroll.value() == scroll.maximum()
+        selected = cloud.current_row()[0]
+        cloud.history_toggle.click()
+        assert cloud.history_pane.isHidden()
+        cloud.history_toggle.click()
+        assert cloud.history.isVisible() and cloud.current_row()[0] == selected
+        row = cloud.rows[selected]
+        row.ja = "システムの要件と課題を説明してください。" * 18
+        row.zh = "请说明系统的需求与难点。" * 35
+        cloud.mark_changed(selected)
+        cloud.render_history()
+        app.processEvents()
+        assert cloud.original.text().endswith("…")
+        assert cloud.transcription.expand.isVisible()
+        cloud.transcription.expand.click()
+        assert cloud.original.text() == row.ja
+        assert cloud.translated.text() == row.zh
+        cloud.transcription.expand.click()
+        assert cloud.original.text().endswith("…")
         window.resize(790, 550)
         app.processEvents()
         assert cloud.splitter.orientation() == Qt.Orientation.Horizontal
@@ -241,6 +268,72 @@ def test_answer_defaults_to_focus_readings_and_expands_without_changing_copy(mon
         assert app.clipboard().text() == f"{ja}\n\n{zh}"
         cloud.full_annotations.click()
         assert len(rendered[-1][1]) == 3
+    finally:
+        window.close()
+        wait_until(app, lambda: not window.isVisible())
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_compact_follows_live_turn_when_main_window_reviews_history(monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant.__main__ import MainWindow
+    from ai_japanese_interview_assistant.answer_format import Highlight
+    from ai_japanese_interview_assistant.cloud_gui import DeviceScan, Row
+    from ai_japanese_interview_assistant.interview import Answer
+    from ai_japanese_interview_assistant.transcription import TranscriptPart
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(DeviceScan, "run", lambda self: self.result.emit([]))
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    cloud = window.cloud
+    try:
+        old_key, live_key = (1, 1, "old"), (1, 1, "live")
+        ja = "要件を確認します。試作します。テストします。最後に改善します。"
+        cloud.rows[old_key] = Row(ja="前の質問", finalized=True)
+        cloud.rows[live_key] = Row(ja="今の質問", zh="当前问题", finalized=True,
+                                  answer=Answer(ja, "回答译文", highlights=(Highlight(0, 2),)))
+        cloud.mark_changed(live_key)
+        cloud.render_history()
+        cloud.history.setCurrentRow(0)
+        assert cloud.original.text() == "前の質問"
+
+        window.toggle_compact()
+        compact = window.compact
+        assert compact.isVisible()
+        assert compact.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+        assert compact.transcription.original.text() == "今の質問"
+        assert compact.answer.japanese.text() == ja[:ja.index("最後")]
+        assert compact.answer.keywords.isVisible()
+        compact.answer.expand.click()
+        assert compact.answer.japanese.text() == ja
+        assert compact.answer.translation.isVisible()
+        compact.answer.expand.click()
+        cloud.rows[live_key].answer = Answer("要件を確認します。", "我会确认需求。")
+        cloud.mark_changed(live_key)
+        cloud.render_history()
+        assert compact.answer.expand.isVisible()
+        assert not compact.answer.translation.isVisible()
+        compact.answer.expand.click()
+        assert compact.answer.translation.text() == "我会确认需求。"
+        assert compact.answer.translation.isVisible()
+
+        cloud.state = "active"
+        cloud.session_id = cloud.generation = 1
+        cloud.add_partial_transcript(((1, 1, "next"), TranscriptPart("next", "次の質問")))
+        assert compact.transcription.original.text() == "次の質問"
+        assert compact.answer.heading.text() == "上一段回答"
+        long_part = "面接官の長い質問" * 35 + "最後の言葉"
+        cloud.add_partial_transcript(((1, 1, "next"), TranscriptPart("next", long_part)))
+        assert compact.transcription.original.text().startswith("…")
+        assert compact.transcription.original.text().endswith("最後の言葉")
+        compact.pin.click()
+        assert not compact.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+        window.toggle_compact()
+        assert not compact.isVisible()
+        assert cloud.original.text() == "前の質問"
     finally:
         window.close()
         wait_until(app, lambda: not window.isVisible())
@@ -320,7 +413,7 @@ def test_answer_level_is_restored_after_restart():
     try:
         wait_until(app, lambda: window.cloud.provider.isEnabled())
         level = window.cloud.answer_level
-        assert level.currentData() == "N2"
+        assert level.currentData() == "N3"
         assert {level.itemData(i) for i in range(level.count())} == {"N1", "N2", "N3", "N4", "N5"}
         level.setCurrentIndex(level.findData("N1"))
     finally:
@@ -439,7 +532,7 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
 def test_caption_reveals_new_characters_one_at_a_time(monkeypatch):
     from PySide6.QtWidgets import QApplication
-    from ai_japanese_interview_assistant.cloud_gui import CaptionLabel
+    from ai_japanese_interview_assistant.interview_ui import CaptionLabel
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
@@ -523,16 +616,16 @@ def test_history_keeps_old_rows_and_scroll_position_when_a_new_segment_arrives(m
         cloud.dirty = True
         cloud.render_history()
         app.processEvents()
-        cloud.history.selectRow(5)
+        cloud.history.setCurrentRow(5)
         scroll = cloud.history.verticalScrollBar()
         scroll.setValue(3)
         newest = (1, 1, "500")
         cloud.add_transcript((newest, TranscriptPart("500", "次の質問", final=True)))
         cloud.add_translation(newest, "下一个问题", "已翻译")
         cloud.render_history()
-        assert cloud.history.rowCount() == 501
-        assert cloud.history.item(0, 1).text() == "问题 0"
-        assert cloud.history.item(500, 1).text() == "下一个问题"
+        assert cloud.history.count() == 501
+        assert "问题 0" in cloud.history.item(0).text()
+        assert "下一个问题" in cloud.history.item(500).text()
         assert cloud.current_row()[0] == keys[5]
         assert scroll.value() == 3
         cloud.latest.click()
