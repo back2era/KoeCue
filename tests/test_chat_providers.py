@@ -19,6 +19,8 @@ CHAT_PROVIDERS = [
      {"reasoning_split": True, "reasoning_effort": "low", "max_completion_tokens": 1724}),
     ("gemini", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
      "gemini-3.8-flash", {"reasoning_effort": "low", "max_tokens": 1724}),
+    ("groq", "https://api.groq.com/openai/v1/chat/completions", "openai/gpt-oss-20b",
+     {"reasoning_effort": "low", "max_completion_tokens": 1724}),
 ]
 
 
@@ -169,7 +171,7 @@ def test_model_catalog_filters_non_text_openai_models():
 
 def test_connection_check_sends_only_a_fixed_translation_sample():
     def handle(request):
-        assert json.loads(request.content)["messages"][-1]["content"] == "おはようございます。"
+        assert json.loads(request.content)["messages"][-1]["content"] == "Why do you want to join the Summer Work Travel program?"
         return httpx.Response(200, text=(
             'data: {"choices":[{"delta":{"content":"早上好。"},"finish_reason":"stop"}]}\n\n'
         ))

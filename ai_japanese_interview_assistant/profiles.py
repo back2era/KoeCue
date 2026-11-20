@@ -27,7 +27,7 @@ def app_directory():
     if not local:
         raise ProfileError("Windows 本地应用数据目录不可用。")
     # The directory name is stable across display-name changes.
-    return Path(local) / "AIJapaneseInterviewAssistant"
+    return Path(local) / "KoeCueSWT"
 
 
 def validate_facts(facts):
@@ -42,7 +42,7 @@ def validate_facts(facts):
             raise ProfileError("资料类别无效。")
         for text in (fact.ja, fact.zh):
             if not isinstance(text, str) or not text.strip() or len(text) > 240:
-                raise ProfileError("每条资料须同时填写日语和中文，各限 240 字。")
+                raise ProfileError("每条资料须同时填写英语和中文，各限 240 字。")
         if len(fact.tags) > 10 or any(not isinstance(tag, str) or len(tag) > 40 for tag in fact.tags):
             raise ProfileError("每条资料最多 10 个关键词，每个限 40 字。")
 

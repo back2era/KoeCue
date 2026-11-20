@@ -29,11 +29,11 @@ class PersonalPane(QWidget):
         self.provider = ""
         self.state = "idle"
 
-        self.background = self.editor("自我介绍", "例如：我学电子信息工程，做过嵌入式项目，日语约 N3。", 90)
+        self.background = self.editor("自我介绍", "填写真实资料：学校、年级、专业、实习或兼职经历、参加 SWT 的动机、回国后的安排。", 90)
         self.resume = self.editor("简历文本", "可导入或粘贴中文、日文、英文简历。可先在这里删去不需要的联系方式。", 128)
-        self.company = self.field("对方公司", "例如：○○株式会社")
-        self.role = self.field("应聘岗位", "例如：嵌入式软件工程师")
-        self.scenario = self.editor("场景说明", "例如：技术一面，重点介绍毕业设计，回答简短一点。", 90)
+        self.company = self.field("对方公司", "例如：已确认的美国雇主或项目机构")
+        self.role = self.field("应聘岗位", "例如：意向岗位是客房服务（未确认）")
+        self.scenario = self.editor("场景说明", "例如：SWT 机构英语口测。可填写已确认的工作城市、职责、住宿、通勤及文化交流计划。", 90)
         self.import_button = QPushButton("导入简历")
         self.clear_resume = QPushButton("清空简历文本")
         self.save = QPushButton("保存个人信息")

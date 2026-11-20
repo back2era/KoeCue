@@ -323,5 +323,5 @@ class RubyLabel(QLabel):
             super().contextMenuEvent(event)
             return
         menu = QMenu(self)
-        menu.addAction("复制日语回答", lambda: QApplication.clipboard().setText(self.text()))
+        menu.addAction("复制英语回答", lambda: QApplication.clipboard().setText(self.text()))
         menu.exec(event.globalPos())

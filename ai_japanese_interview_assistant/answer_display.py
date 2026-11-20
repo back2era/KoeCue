@@ -2,7 +2,7 @@
 import re
 
 
-_SENTENCE_END = re.compile(r"[。！？!?]+[」』）】》”’]*[ \t]*")
+_SENTENCE_END = re.compile(r"(?:[。！？!?]+[」』）】》”’]*[ \t]*|\.[\"”’]?[ \t]+)")
 
 
 def compact_annotations(text, annotations, highlights):

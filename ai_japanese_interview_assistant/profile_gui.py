@@ -50,7 +50,7 @@ class ProfileDialog(GlassDialog):
         self.table.setShowGrid(False)
         self.table.verticalHeader().hide()
         self.table.verticalHeader().setDefaultSectionSize(43)
-        self.table.setHorizontalHeaderLabels(["本次分享", "类别", "日语事实句", "中文事实句", "关键词"])
+        self.table.setHorizontalHeaderLabels(["本次分享", "类别", "英语事实句", "中文事实句", "关键词"])
         header = self.table.horizontalHeader()
         for index in (2, 3, 4):
             header.setSectionResizeMode(index, QHeaderView.ResizeMode.Stretch)

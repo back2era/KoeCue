@@ -80,7 +80,7 @@ def test_websocket_appends_pcm_and_waits_for_final_after_commit():
 
     events = []
     asyncio.run(run_transcription("test", frames(), events.append, connect=connect))
-    assert socket.sent[0]["session"]["audio"]["input"]["transcription"]["languages"] == ["ja"]
+    assert socket.sent[0]["session"]["audio"]["input"]["transcription"]["languages"] == ["en"]
     assert socket.sent[1] == {"type": "input_audio_buffer.append", "audio": "AAE="}
     assert socket.sent[2] == {"type": "input_audio_buffer.commit"}
     assert events[0]["transcript"] == "自己紹介をお願いします。"

@@ -126,15 +126,15 @@ def test_answer_arrives_before_reading_aids_and_receives_current_difficulty(
                 return enriched
 
         monkeypatch.setattr(live, "record", lambda *args: None)
-        worker = LiveWorker(1, None, "test", answer_level="N2")
-        worker.answer_level = "N1"
+        worker = LiveWorker(1, None, "test", answer_level="B1")
+        worker.answer_level = "C1"
         worker.interview = Replies()
         worker.answer.connect(lambda key, answer, state, scoped: events.append(answer) if answer else None)
         row_id = (0, 1, "reading")
         worker.start_answer(row_id, "どうしますか。", automatic=True)
         task = worker.jobs[("answer", row_id)]
         await asyncio.wait_for(annotating.wait(), 1)
-        assert levels == ["N1"]
+        assert levels == ["C1"]
         assert events == [plain]
         release.set()
         await asyncio.wait_for(task, 1)

@@ -20,7 +20,7 @@ from ai_japanese_interview_assistant.personal import (
 def test_personal_data_round_trips_separately_in_local_app_directory(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     store = PersonalStore()
-    assert store.path == tmp_path / "AIJapaneseInterviewAssistant" / "personal.json"
+    assert store.path == tmp_path / "KoeCueSWT" / "personal.json"
     assert not store.load()
     info = PersonalInfo("模拟背景", "テスト履歴書", "Example Ltd", "Engineer", "一次面接")
     store.save(info)

@@ -11,7 +11,7 @@ from ai_japanese_interview_assistant.services import ServiceError
 def test_profile_round_trip_and_delete(tmp_path):
     store = ProfileStore(tmp_path / "profile.json")
     assert store.load() == ()
-    facts = (Fact("a", "education", "工学を学びました。", "我学习了工学。"),)
+    facts = (Fact("a", "education", "I studied engineering.", "我学习了工学。"),)
     store.save(facts)
     assert ProfileStore(store.path).load() == facts
     store.save(())
@@ -45,24 +45,24 @@ class InterviewBackend:
         if purpose == "question":
             return {"question": True, "personal": True, "categories": ["project"]}
         if purpose == "draft":
-            return {"before_ja": "お答えします。", "before_zh": "我来回答。",
-                    "after_ja": "", "after_zh": "", "fact_ids": [self.fact_id]}
+            return {"before_en": "Sure.", "before_zh": "我来回答。",
+                    "after_en": "", "after_zh": "", "fact_ids": [self.fact_id]}
         return {"safe": True}
 
 
 def test_only_authorized_fact_is_sent_and_rendered_verbatim():
     backend = InterviewBackend("a")
-    facts = (Fact("a", "project", "測定を担当しました。", "我负责测量。"),)
+    facts = (Fact("a", "project", "I was in charge of taking measurements.", "我负责测量。"),)
     answer = asyncio.run(InterviewService(backend).suggest("役割は？", automatic=False, facts=facts))
     payload = json.loads(backend.payloads["draft"])
-    assert payload["facts"] == [{"id": "a", "ja": "測定を担当しました。", "zh": "我负责测量。"}]
-    assert answer.ja.endswith("測定を担当しました。")
+    assert payload["facts"] == [{"id": "a", "en": "I was in charge of taking measurements.", "zh": "我负责测量。"}]
+    assert answer.ja.endswith("I was in charge of taking measurements.")
     assert answer.zh.endswith("我负责测量。")
 
 
 def test_unknown_fact_id_stops_suggestion_before_verification():
     backend = InterviewBackend("unknown")
-    facts = (Fact("a", "project", "測定を担当しました。", "我负责测量。"),)
+    facts = (Fact("a", "project", "I was in charge of taking measurements.", "我负责测量。"),)
     with pytest.raises(ServiceError, match="核验"):
         asyncio.run(InterviewService(backend).suggest("役割は？", automatic=False, facts=facts))
     assert "verify_answer" not in backend.payloads
@@ -80,7 +80,7 @@ def test_revocation_during_classification_prevents_fact_upload():
             return result
 
     backend = RevokingBackend("a")
-    facts = (Fact("a", "project", "測定を担当しました。", "我负责测量。"),)
+    facts = (Fact("a", "project", "I was in charge of taking measurements.", "我负责测量。"),)
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(InterviewService(backend).suggest(
             "役割は？", automatic=False, facts=facts, allowed=lambda: allowed,

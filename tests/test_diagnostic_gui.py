@@ -206,9 +206,9 @@ def test_application_waveform_icon_reaches_main_window_and_settings():
     window = MainWindow()
     window.show()
     try:
-        assert app.applicationName() == "KoeCue"
-        assert window.windowTitle() == "KoeCue"
-        assert window.findChild(QLabel, "appTitle").text() == "KoeCue"
+        assert app.applicationName() == "KoeCue-SWT"
+        assert window.windowTitle() == "KoeCue-SWT"
+        assert window.findChild(QLabel, "appTitle").text() == "KoeCue-SWT"
         icon = app.windowIcon()
         assert not icon.isNull()
         assert window.windowIcon().cacheKey() == icon.cacheKey()
@@ -269,9 +269,9 @@ def test_answer_level_is_restored_after_restart():
     try:
         wait_until(app, lambda: window.cloud.provider.isEnabled())
         level = window.cloud.answer_level
-        assert level.currentData() == "N2"
-        assert {level.itemData(i) for i in range(level.count())} == {"N1", "N2", "N3", "N4", "N5"}
-        level.setCurrentIndex(level.findData("N1"))
+        assert level.currentData() == "B1"
+        assert {level.itemData(i) for i in range(level.count())} == {"C1", "B1", "B2", "A2", "A1"}
+        level.setCurrentIndex(level.findData("C1"))
     finally:
         window.close()
         wait_until(app, lambda: not window.isVisible())
@@ -280,7 +280,7 @@ def test_answer_level_is_restored_after_restart():
     reopened.show()
     try:
         wait_until(app, lambda: reopened.cloud.provider.isEnabled())
-        assert reopened.cloud.answer_level.currentData() == "N1"
+        assert reopened.cloud.answer_level.currentData() == "C1"
     finally:
         reopened.close()
         wait_until(app, lambda: not reopened.isVisible())
@@ -303,8 +303,8 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
         translations = []
         answers = []
         previews = []
-        statement = "次に、担当業務についてご説明します。"
-        answer_text = "はい、よろしくお願いします。"
+        statement = "Next, I'll explain the duties of the role."
+        answer_text = "I would ask my sponsor."
 
         def handle(request):
             assert str(request.url) == DEEPSEEK.url
@@ -319,14 +319,14 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
             name = payload["text"]["format"]["name"]
             if name == "draft":
                 assert json.loads(payload["input"]) == {"question": statement, "facts": []}
-                assert "JLPT N1" in payload["instructions"]
+                assert "CEFR C1" in payload["instructions"]
             elif name == "annotate_answer":
                 assert payload["input"] == answer_text
             structured = {
-                "draft": {"before_ja": answer_text, "before_zh": "好的，请您介绍。",
-                          "after_ja": "", "after_zh": "", "fact_ids": []},
+                "draft": {"before_en": answer_text, "before_zh": "好的，请您介绍。",
+                          "after_en": "", "after_zh": "", "fact_ids": []},
                 "verify_answer": {"safe": True},
-                "annotate_answer": {"terms": ["願"], "labels": ["ねが"], "contexts": [""], "focus_terms": []},
+                "annotate_answer": {"terms": ["sponsor"], "labels": ["项目机构"], "contexts": [""], "focus_terms": []},
             }[name]
             return httpx.Response(200, json={"status": "completed", "output": [{
                 "type": "message",
@@ -367,7 +367,7 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
         monkeypatch.setattr(live, "load_decoder", lambda: lambda pcm, *, preview=False: "次に担当" if preview else statement)
         monkeypatch.setattr(live, "run_transcription", no_openai)
         monkeypatch.setattr(live, "record", lambda *args: None)
-        worker = live.LiveWorker(1, None, "test-deepseek", provider=DEEPSEEK, auto_answer=True, answer_level="N1")
+        worker = live.LiveWorker(1, None, "test-deepseek", provider=DEEPSEEK, auto_answer=True, answer_level="C1")
         monkeypatch.setattr(worker, "audio_commands", frames)
         worker.partial_transcript.connect(on_preview)
         worker.translation.connect(on_translation)
@@ -376,10 +376,10 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
         assert previews == ["次に担当"]
         assert translations == ["接下来我会介绍岗位职责。"]
         row_id = (0, 1, "local-1")
-        offset = answer_text.index("願")
+        offset = answer_text.index("sponsor")
         assert answers == [
             (row_id, Answer(answer_text, "好的，请您介绍。")),
-            (row_id, Answer(answer_text, "好的，请您介绍。", (RubyAnnotation(offset, offset + 1, "ねが"),))),
+            (row_id, Answer(answer_text, "好的，请您介绍。", (RubyAnnotation(offset, offset + len("sponsor"), "项目机构"),))),
         ]
 
     asyncio.run(exercise())
@@ -536,7 +536,7 @@ def test_api_settings_restore_each_provider_model_without_saving_a_key(monkeypat
             "openai": "gpt-6.1-terra", "qwen": "qwen-custom-test",
         }
         assert preferences.qwen_workspace == "llm-example"
-        settings_file = tmp_path / "AIJapaneseInterviewAssistant" / "settings.ini"
+        settings_file = tmp_path / "KoeCueSWT" / "settings.ini"
         assert "synthetic-qwen-key" not in settings_file.read_text(encoding="utf-8")
     finally:
         window.close()
@@ -643,7 +643,7 @@ def test_settings_restore_after_closing_with_a_renumbered_audio_device(monkeypat
         assert not pane.auto_answer.isChecked()
         assert not pane.consent.isChecked()
         assert pane.worker is None
-        settings = tmp_path / "AIJapaneseInterviewAssistant" / "settings.ini"
+        settings = tmp_path / "KoeCueSWT" / "settings.ini"
         assert "synthetic-key" not in settings.read_text(encoding="utf-8")
         pane.use_vault("delete")
         wait_until(app, lambda: pane.key.isEnabled())
@@ -691,7 +691,7 @@ def test_profile_editor_saves_then_shares_selected_entry(tmp_path, monkeypatch):
 
     wait_for_io()
     dialog.add_blank()
-    dialog.table.item(0, 2).setText("工学を学びました。")
+    dialog.table.item(0, 2).setText("I studied engineering.")
     dialog.table.item(0, 3).setText("我学习了工学。")
     dialog.table.item(0, 0).setCheckState(Qt.CheckState.Checked)
     dialog.share_profile()
@@ -700,7 +700,7 @@ def test_profile_editor_saves_then_shares_selected_entry(tmp_path, monkeypatch):
     wait_for_io()
     dialog.share_profile()
     assert len(approved[0]) == 1
-    assert approved[0][0].ja == "工学を学びました。"
+    assert approved[0][0].ja == "I studied engineering."
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")

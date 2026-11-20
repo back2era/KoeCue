@@ -14,7 +14,7 @@ from .profiles import ProfileError, app_directory
 
 
 # Keep the Windows identity stable across display-name changes.
-APP_ID = "AIJapaneseInterviewAssistant.Desktop"
+APP_ID = "KoeCueSWT.Desktop"
 _LOG = logging.getLogger(__name__)
 _Guid = ctypes.c_ubyte * 16
 _APP_PROPERTIES = _Guid.from_buffer_copy(UUID("9f4c2855-9f79-4b39-a8d0-e1d42de1d5f3").bytes_le)

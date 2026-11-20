@@ -60,7 +60,7 @@ def test_windows_shell_receives_waveform_icon_and_separate_application_id(tmp_pa
                     ctypes.oledll.ole32.PropVariantClear(ctypes.byref(value))
 
         assert property_value(5) == taskbar.APP_ID
-        assert property_value(4) == "KoeCue"
+        assert property_value(4) == "KoeCue-SWT"
         assert "pythonw.exe" in property_value(2) and "launch.pyw" in property_value(2)
         icon_path, index = property_value(3).rsplit(",", 1)
         assert index == "0" and Path(icon_path).is_file()

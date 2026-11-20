@@ -70,7 +70,12 @@ GEMINI = Provider(
     "gemini-3.8-flash", chat=True, models_url="https://generativelanguage.googleapis.com/v1beta/openai/models",
     model_pattern=r"gemini-\d+(?:\.\d+)?-(?:flash(?:-lite)?|pro)(?:-(?:preview|latest|\d[\w.-]*))?",
 )
+GROQ = Provider(
+    "Groq", "GROQ_API_KEY", "https://api.groq.com/openai/v1/chat/completions",
+    "openai/gpt-oss-20b", ("openai/gpt-oss-120b",), chat=True,
+    models_url="https://api.groq.com/openai/v1/models", model_pattern=r"openai/gpt-oss-(?:20b|120b)",
+)
 PROVIDERS = {
     "openai": OPENAI, "deepseek": DEEPSEEK, "anthropic": ANTHROPIC, "qwen": QWEN,
-    "kimi": KIMI, "glm": GLM, "minimax": MINIMAX, "gemini": GEMINI,
+    "kimi": KIMI, "glm": GLM, "minimax": MINIMAX, "gemini": GEMINI, "groq": GROQ,
 }

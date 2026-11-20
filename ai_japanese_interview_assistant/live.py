@@ -17,6 +17,9 @@ from .telemetry import Event as LogEvent, record
 from .transcription import AudioProcessor, LOCAL_PREVIEW_EVENT, RealtimeError, TranscriptBook, run_transcription
 
 
+from .transcription import DoubaoPCM, run_doubao
+
+
 ANSWER_PENDING = "正在生成建议…"
 MAX_ACTIVE_TEXT_JOBS = 8
 MAX_WAITING_ANSWERS = 32
@@ -32,7 +35,7 @@ class LiveWorker(QThread):
 
     def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False,
                  facts=(), personal_info=PersonalInfo(), provider=OPENAI, answer_level=DEFAULT_ANSWER_LEVEL,
-                 model="", workspace=""):
+                 model="", workspace="", doubao_key=""):
         super().__init__(parent)
         self.generation = generation
         self.session_id = session_id
@@ -41,6 +44,7 @@ class LiveWorker(QThread):
         self.provider = provider
         self.model = model
         self.workspace = workspace
+        self.doubao_key = doubao_key
         self.auto_answer = auto_answer
         self.answer_level = answer_level
         self.facts = facts
@@ -105,7 +109,7 @@ class LiveWorker(QThread):
             self.status.emit("asr", error_message(exc))
         finally:
             self.buffer.close()
-            self.key = ""
+            self.key = self.doubao_key = ""
             self._clear_profile()
             self.loop = None
 
@@ -119,7 +123,11 @@ class LiveWorker(QThread):
             self.interview = InterviewService(self.service)
             started = monotonic()
             try:
-                if self.provider is OPENAI:
+                if self.doubao_key:
+                    self.status.emit("asr", "正在连接豆包实时语音识别…")
+                    await run_doubao(self.doubao_key, self.audio_commands(doubao=True), self.on_event,
+                                     lambda: self.status.emit("asr", "豆包实时语音已连接"))
+                elif self.provider is OPENAI:
                     self.status.emit("asr", "正在连接转写服务…")
 
                     def connected():
@@ -131,7 +139,7 @@ class LiveWorker(QThread):
                         on_ending=self.stop_text_and_audio,
                     )
                 else:
-                    self.status.emit("asr", "正在加载本地日语模型…")
+                    self.status.emit("asr", "正在加载本地英语模型…")
                     decoder = await asyncio.to_thread(load_decoder)
                     if self.isInterruptionRequested():
                         return
@@ -154,9 +162,9 @@ class LiveWorker(QThread):
         for task in self.jobs.values():
             task.cancel()
 
-    async def audio_commands(self):
+    async def audio_commands(self, *, doubao=False):
         self.status.emit("audio", "正在打开音频设备…")
-        processor = AudioProcessor(self.device.rate, self.device.channels)
+        processor = (DoubaoPCM if doubao else AudioProcessor)(self.device.rate, self.device.channels)
         with capture(self.device, self.buffer) as stream:
             if self.isInterruptionRequested():
                 return
@@ -165,6 +173,7 @@ class LiveWorker(QThread):
             last_frame = monotonic()
             next_topology = last_frame + 1
             flushed = False
+            next_silence = last_frame + 0.12
             while not self.isInterruptionRequested():
                 if monotonic() >= next_topology:
                     check_topology(self.device)
@@ -173,6 +182,13 @@ class LiveWorker(QThread):
                 if pcm is None:
                     if not stream.is_active():
                         raise AudioError("设备已断开。停止后请刷新设备列表。")
+                    if doubao:
+                        now = monotonic()
+                        if now >= next_silence:
+                            next_silence = now + 0.1
+                            yield bytes(3200)
+                        await asyncio.sleep(0.01)
+                        continue
                     if not flushed and monotonic() - last_frame >= 0.6:
                         for command in processor.finish_turn():
                             yield command
@@ -181,6 +197,12 @@ class LiveWorker(QThread):
                     await asyncio.sleep(0.01)
                     continue
                 last_frame = monotonic()
+                if doubao:
+                    next_silence = last_frame + 0.12
+                    chunk = processor.push(pcm)
+                    if chunk:
+                        yield chunk
+                    continue
                 if flushed:
                     self.status.emit("audio", "音频 · 正在监听")
                 flushed = False

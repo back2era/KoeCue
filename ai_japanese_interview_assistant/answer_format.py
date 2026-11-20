@@ -4,13 +4,13 @@ import re
 
 
 ANSWER_LEVELS = {
-    "N5": "使用最基本的日常词汇与简单的です／ます短句，拆开复杂意思。",
-    "N4": "使用熟悉的生活和工作词汇，以及简单的原因、顺序和条件表达。",
-    "N3": "使用常见工作词汇与清晰的中级语法，减少长定语和罕见术语。",
-    "N2": "使用常见商务用语和自然敬体，适度使用转折、因果和条件表达。",
-    "N1": "在自然面试口语中使用精准词汇、细致的语气和较丰富的衔接表达，避免堆砌生僻词。",
+    "A1": "使用最基本的英语词汇，每句只说一个意思。",
+    "A2": "使用熟悉的生活和工作词汇，以及简单的原因、顺序和条件表达。",
+    "B1": "使用常见工作词汇与清晰的中级语法，减少长定语和罕见术语。",
+    "B2": "使用自然英语口语，适度用转折、因果和条件表达。",
+    "C1": "在自然面试口语中使用精准词汇、细致的语气和较丰富的衔接表达，避免堆砌生僻词。",
 }
-DEFAULT_ANSWER_LEVEL = "N2"
+DEFAULT_ANSWER_LEVEL = "B1"
 MAX_ANNOTATIONS = 64
 MAX_HIGHLIGHTS = 5
 MAX_HIGHLIGHT_LENGTH = 24
@@ -44,7 +44,7 @@ class Highlight:
 
 
 def has_annotation_candidates(text):
-    return bool(_KANJI.search(text) or _KATAKANA.search(text))
+    return bool(_ENGLISH.search(text))
 
 
 def has_highlight_candidates(text):
@@ -54,9 +54,7 @@ def has_highlight_candidates(text):
 def _valid_pair(term, label):
     if not 0 < len(term) <= 24 or not 0 < len(label) <= 40:
         return False
-    if _KANJI.search(term) and _JAPANESE_WORD.fullmatch(term):
-        return bool(_HIRAGANA.fullmatch(label))
-    return bool(_KATAKANA.fullmatch(term) and _ENGLISH.fullmatch(label))
+    return bool(_ENGLISH.fullmatch(term) and _KANJI.search(label))
 
 
 def _unique_offset(text, fragment):

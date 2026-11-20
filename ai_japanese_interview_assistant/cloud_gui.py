@@ -121,7 +121,7 @@ class CloudPane(QWidget):
             self.theme.addItem(theme.label, theme_id)
         self.theme.setCurrentIndex(self.theme.findData(DEFAULT_THEME))
         self.answer_level = GlassComboBox()
-        self.answer_level.setAccessibleName("AI 回答难度")
+        self.answer_level.setAccessibleName("AI 英语回答难度")
         for level in ANSWER_LEVELS:
             self.answer_level.addItem(level, level)
         self.answer_level.setCurrentIndex(self.answer_level.findData(DEFAULT_ANSWER_LEVEL))
@@ -146,7 +146,7 @@ class CloudPane(QWidget):
         self.model_refresh = QPushButton("刷新模型")
         self.model_refresh.setToolTip("从服务商获取模型列表。也可以直接输入模型 ID。")
         self.api_test = QPushButton("测试连接")
-        self.api_test.setToolTip("向所选模型发送固定日语短句，检查流式译文。")
+        self.api_test.setToolTip("向所选模型发送固定英语短句，检查流式译文。")
         self.api_status = plain_label("", "muted")
         self.api_status.hide()
         self.key = QLineEdit()
@@ -158,6 +158,12 @@ class CloudPane(QWidget):
         for action, operation in (("读取已保存的 Key", "read"), ("保存当前 Key", "save"), ("删除已保存的 Key", "delete")):
             vault_menu.addAction(action, lambda checked=False, op=operation: self.use_vault(op))
         self.vault_button.setMenu(vault_menu)
+        self.doubao = QCheckBox("使用豆包实时语音识别 2.0")
+        self.doubao_key = QLineEdit()
+        self.doubao_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.doubao_key.setPlaceholderText("豆包语音 API Key（本次使用，不保存）")
+        self.doubao_key.setAccessibleName("豆包语音 API Key")
+        self.doubao_key.hide()
         self.consent = QCheckBox()
         self.auto_answer = QCheckBox("自动为面试发言生成建议")
         self.auto_answer.setChecked(True)
@@ -177,7 +183,7 @@ class CloudPane(QWidget):
         self.history.setAlternatingRowColors(True)
         self.history.setShowGrid(False)
         self.history.verticalHeader().hide()
-        self.history.setHorizontalHeaderLabels(["日语原文", "简体中文", "状态"])
+        self.history.setHorizontalHeaderLabels(["英语原文", "简体中文", "状态"])
         self.history.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.history.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.history.setColumnWidth(2, 92)
@@ -191,10 +197,10 @@ class CloudPane(QWidget):
         self.empty_history.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         empty_layout = QVBoxLayout(self.history.viewport())
         empty_layout.addWidget(self.empty_history)
-        self.original = CaptionLabel("等待日语语音…")
+        self.original = CaptionLabel("等待英语语音…")
         self.translated = CaptionLabel("等待中文译文…")
         self.live_caption = plain_label("", "captionText")
-        self.live_caption.setAccessibleName("正在识别的日语")
+        self.live_caption.setAccessibleName("正在识别的英语")
         self.original_state = plain_label("", "captionState")
         self.translation_state = plain_label("", "captionState")
         self.answer_ja = RubyLabel()
@@ -203,7 +209,7 @@ class CloudPane(QWidget):
         self.answer_translation_rule = self.rule()
         self.full_annotations = QPushButton("全部标注")
         self.full_annotations.setCheckable(True)
-        self.full_annotations.setToolTip("切换重点标注和全部平假名、英文标注")
+        self.full_annotations.setToolTip("切换回答的重点短语和全部中文词义提示")
         self.answer_status = plain_label("", "muted")
         self.listening_badge = plain_label("", "listeningBadge")
         self.listening_badge.setWordWrap(False)
@@ -229,6 +235,8 @@ class CloudPane(QWidget):
         self.workspace.textChanged.connect(self.api_input_changed)
         self.model_refresh.clicked.connect(lambda: self.run_api_action(refresh=True))
         self.api_test.clicked.connect(lambda: self.run_api_action(refresh=False))
+        self.doubao.toggled.connect(self.speech_settings_changed)
+        self.doubao_key.textChanged.connect(self.speech_settings_changed)
         self.consent.toggled.connect(self.controls)
         self.auto_answer.toggled.connect(self.select_row)
         self.key.textChanged.connect(self.api_input_changed)
@@ -271,7 +279,7 @@ class CloudPane(QWidget):
         preview = QVBoxLayout(self.preview_card)
         preview.setContentsMargins(13, 8, 13, 9)
         preview.setSpacing(3)
-        preview.addWidget(plain_label("日语 · 识别中", "muted"))
+        preview.addWidget(plain_label("英语 · 识别中", "muted"))
         preview.addWidget(self.live_caption)
         self.preview_card.hide()
         layout.addWidget(self.preview_card)
@@ -290,7 +298,7 @@ class CloudPane(QWidget):
         page.setSpacing(8)
 
         for title, caption, status in (
-            ("日语原文", self.original, self.original_state),
+            ("英语原文", self.original, self.original_state),
             ("简体中文", self.translated, self.translation_state),
         ):
             if caption is self.translated:
@@ -355,7 +363,7 @@ class CloudPane(QWidget):
         options = glass_panel()
         option_layout = QVBoxLayout(options)
         option_layout.setContentsMargins(16, 12, 16, 12)
-        for title, selector in (("界面主题", self.theme), ("AI 回答难度", self.answer_level)):
+        for title, selector in (("界面主题", self.theme), ("AI 英语回答难度", self.answer_level)):
             row = QHBoxLayout()
             row.addWidget(plain_label(title, "sectionTitle"), 1)
             row.addWidget(selector)
@@ -388,6 +396,8 @@ class CloudPane(QWidget):
         settings.addWidget(self.api_status)
         self.settings.body.addWidget(card)
 
+        self.settings.body.addWidget(self.doubao)
+        self.settings.body.addWidget(self.doubao_key)
         self.settings.body.addWidget(self.consent)
         self.settings.body.addStretch()
         done = QPushButton("完成")
@@ -575,16 +585,28 @@ class CloudPane(QWidget):
         self.approved_facts = ()
         self.approved_personal = PersonalInfo()
         self.key.setPlaceholderText(f"{provider.label} API Key")
-        self.consent.setText(
-            "已取得必要同意，允许将所选来源的音频及转写发送至 OpenAI"
-            if provider is OPENAI else
-            f"已取得必要同意。音频在本机转写，日语文字及单独授权的资料可发送至 {provider.label}"
-        )
-        self.asr_status.setText("转写未连接" if provider is OPENAI else "本地日语转写未启动")
+        self.update_speech_consent()
+        self.asr_status.setText("转写未连接" if provider is OPENAI else "本地英语转写未启动")
         self.text_status.setText(f"{provider.label} 文本 API 未连接")
         if self.preferences_ready and not self.closing:
             self.use_vault("read")
         self.controls()
+
+    def speech_settings_changed(self):
+        self.doubao_key.setVisible(self.doubao.isChecked())
+        self.update_speech_consent()
+        self.consent.setChecked(False)
+        self.controls()
+
+    def update_speech_consent(self):
+        provider = self.selected_provider()
+        self.consent.setText(
+            f"同意将音频发送至火山引擎豆包；英文字幕和已授权资料交给 {provider.label} 处理"
+            if self.doubao.isChecked() else
+            "已取得必要同意，允许将所选来源的音频及转写发送至 OpenAI"
+            if provider is OPENAI else
+            f"已取得必要同意。音频在本机转写，英语文字及单独授权的资料可发送至 {provider.label}"
+        )
 
     def controls(self):
         idle = (self.worker is None and self.scan is None and self.credential_worker is None
@@ -593,7 +615,7 @@ class CloudPane(QWidget):
         self.theme.setEnabled(self.preferences_ready and not self.closing)
         self.answer_level.setEnabled(self.preferences_ready and not self.closing)
         for widget in (self.source, self.refresh, self.provider, self.model, self.workspace, self.key,
-                       self.vault_button, self.consent, self.auto_answer):
+                       self.vault_button, self.consent, self.auto_answer, self.doubao, self.doubao_key):
             widget.setEnabled(configurable)
         profile_state = (
             configurable, self.approved_personal, len(self.approved_facts), self.selected_provider().label, self.state,
@@ -607,8 +629,12 @@ class CloudPane(QWidget):
         self.api_test.setEnabled(api_ready)
         self.model_refresh.setEnabled(api_ready and bool(self.selected_provider().models_url))
         allowed = bool(self.consent.isChecked() and self.source.currentData() and self.api_key() and endpoint_valid)
+        if self.doubao.isChecked():
+            allowed = allowed and bool(self.doubao_key.text().strip())
         self.start.setEnabled(idle and allowed and self.capture_available)
         mode = "云端监听" if self.selected_provider() is OPENAI else "本地转写"
+        if self.doubao.isChecked():
+            mode = "豆包转写"
         self.start.setText(("恢复" if self.state == "paused" else "开始") + mode)
         self.pause.setEnabled(self.state == "active")
         self.stop.setEnabled(self.state in {"active", "paused"})
@@ -644,7 +670,7 @@ class CloudPane(QWidget):
             source = "上次音源不可用，请重新选择" if self.audio_selection[0] and self.scan is None else "请选择音源"
         else:
             source = "系统音频" if device.loopback else "麦克风"
-        self.input_summary.setText(f"{source} · 日语 → 中文")
+        self.input_summary.setText(f"{source} · 英语 → 中文")
         self.status_detail.setText("  ·  ".join((self.asr_status.text(), self.text_status.text(), audio)))
 
     def start_session(self):
@@ -663,7 +689,8 @@ class CloudPane(QWidget):
                                  session_id=self.session_id, auto_answer=self.auto_answer.isChecked(),
                                  facts=self.approved_facts, personal_info=self.approved_personal,
                                  provider=self.selected_provider(), answer_level=self.answer_level.currentData(),
-                                 model=self.selected_model(), workspace=self.workspace.text().strip())
+                                 model=self.selected_model(), workspace=self.workspace.text().strip(),
+                                 doubao_key=self.doubao_key.text().strip() if self.doubao.isChecked() else "")
         self.worker.status.connect(self.set_status)
         self.worker.partial_transcript.connect(self.add_partial_transcript)
         self.worker.transcript.connect(self.add_transcript)
@@ -756,7 +783,7 @@ class CloudPane(QWidget):
         if part.failed:
             self.rows[key] = Row(asr="转写失败")
         elif part.text:
-            self.rows[key] = Row(ja=part.text, finalized=True, asr="日语定稿")
+            self.rows[key] = Row(ja=part.text, finalized=True, asr="英语定稿")
         else:
             return
         self.mark_changed(key)
@@ -1017,8 +1044,8 @@ class CloudPane(QWidget):
             )
         else:
             self.full_annotations.hide()
-            placeholder = ("每段发言识别完成后会自动生成日语回应建议。" if self.auto_answer.isChecked()
-                           else "选中字幕后可生成日语参考回答。")
+            placeholder = ("每段发言识别完成后会自动生成英语回应建议。" if self.auto_answer.isChecked()
+                           else "选中字幕后可生成英语参考回答。")
             self.answer_ja.set_answer(placeholder)
         self.answer_zh.setText(answer.zh if answer else "")
         show_translation = bool(answer and answer.zh)
