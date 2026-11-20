@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from html import escape
 import asyncio
 import os
+import sys
 
 from PySide6.QtCore import QPoint, QSignalBlocker, QTimer, Signal, Slot, Qt
 from PySide6.QtWidgets import (
@@ -13,17 +14,19 @@ from PySide6.QtWidgets import (
 from .answer_display import compact_annotations, paragraph_breaks
 from .answer_format import ANSWER_LEVELS, DEFAULT_ANSWER_LEVEL
 from .diagnostic import DeviceScan
-from .config import DEFAULT_INTERVIEW_LANGUAGE, INTERVIEW_LANGUAGES, OPENAI, PROVIDERS, QWEN
+from .config import DEEPSEEK, DEFAULT_INTERVIEW_LANGUAGE, INTERVIEW_LANGUAGES, OPENAI, PROVIDERS, QWEN
 from .credentials import credential
 from .glass import DEFAULT_THEME, THEMES, GlassComboBox, GlassDialog, glass_panel, plain_label
 from .interview import Answer
 from .live import ANSWER_PENDING, LiveWorker
+from .local_asr import local_model_available
 from .personal import PersonalInfo
 from .profile_gui import PrivateIO, ProfileDialog
 from .profiles import ProfileError
 from .ruby_label import RubyLabel
 from .services import TextService, client_for, error_message
 from .settings import Preferences, load_preferences, save_preferences
+from .speech import SPEECH_MODELS
 
 
 class CaptionLabel(QLabel):
@@ -94,7 +97,9 @@ class CloudPane(QWidget):
         self.model_choices = {}
         self.audio_selection = ("", False)
         self.vault_operation = ""
-        self.vault_provider = None
+        self.vault_fields = ()
+        self.text_key_provider = OPENAI
+        self.speech_key_provider = None
         self.approved_facts = ()
         self.approved_personal = PersonalInfo()
         self.saved_personal = PersonalInfo()
@@ -133,7 +138,7 @@ class CloudPane(QWidget):
             self.answer_level.addItem(level, level)
         self.answer_level.setCurrentIndex(self.answer_level.findData(DEFAULT_ANSWER_LEVEL))
         self.provider = GlassComboBox()
-        self.provider.setAccessibleName("API 服务商")
+        self.provider.setAccessibleName("AI 回答服务商")
         for code, provider in PROVIDERS.items():
             self.provider.addItem(provider.label, code)
         self.model = GlassComboBox()
@@ -152,19 +157,34 @@ class CloudPane(QWidget):
         self.workspace.hide()
         self.model_refresh = QPushButton("刷新模型")
         self.model_refresh.setToolTip("从服务商获取模型列表。也可以直接输入模型 ID。")
-        self.api_test = QPushButton("测试连接")
+        self.api_test = QPushButton("测试文本 API")
         self.api_test.setToolTip("向所选模型发送固定样例，检查文本 API。")
         self.api_status = plain_label("", "muted")
         self.api_status.hide()
         self.key = QLineEdit()
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.key.setAccessibleName("AI 回答 API Key")
         self.key.setPlaceholderText("API Key")
-        self.vault_button = QPushButton("Windows 凭据")
-        self.vault_button.setObjectName("vaultAction")
-        vault_menu = QMenu(self.vault_button)
-        for action, operation in (("读取已保存的 Key", "read"), ("保存当前 Key", "save"), ("删除已保存的 Key", "delete")):
-            vault_menu.addAction(action, lambda checked=False, op=operation: self.use_vault(op))
-        self.vault_button.setMenu(vault_menu)
+        self.vault_button = self.make_vault_button()
+
+        self.speech_model = GlassComboBox()
+        self.speech_model.setAccessibleName("语音识别模型")
+        self.speech_model.addItem("请选择语音识别模型", "")
+        for code, model in SPEECH_MODELS.items():
+            if code != "local" or not getattr(sys, "frozen", False):
+                self.speech_model.addItem(model.label, code)
+        self.speech_model.setCurrentIndex(self.speech_model.findData("openai"))
+        self.speech_help = plain_label("", "muted")
+        self.speech_key = QLineEdit()
+        self.speech_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.speech_key.setAccessibleName("语音识别 API Key")
+        self.speech_vault_button = self.make_vault_button(speech=True)
+        self.speech_key_row = QWidget()
+        speech_key_layout = QHBoxLayout(self.speech_key_row)
+        speech_key_layout.setContentsMargins(0, 0, 0, 0)
+        speech_key_layout.addWidget(self.speech_key, 1)
+        speech_key_layout.addWidget(self.speech_vault_button)
+        self.speech_key_row.hide()
         self.auto_answer = QCheckBox("自动为面试发言生成建议")
         self.auto_answer.setChecked(True)
         self.manage_facts = QPushButton("管理已核对事实")
@@ -236,6 +256,8 @@ class CloudPane(QWidget):
         self.interview_language.currentIndexChanged.connect(self.select_row)
         self.answer_level.currentIndexChanged.connect(self.update_answer_level)
         self.provider.currentIndexChanged.connect(self.provider_changed)
+        self.speech_model.currentIndexChanged.connect(self.speech_changed)
+        self.speech_key.textChanged.connect(self.controls)
         self.model.currentTextChanged.connect(self.model_changed)
         self.workspace.textChanged.connect(self.api_input_changed)
         self.model_refresh.clicked.connect(lambda: self.run_api_action(refresh=True))
@@ -372,9 +394,31 @@ class CloudPane(QWidget):
         outer.addWidget(bar)
         self.build_settings()
 
+    def make_vault_button(self, *, speech=False):
+        button = QPushButton("Windows 凭据")
+        button.setObjectName("vaultAction")
+        menu = QMenu(button)
+        for label, operation in (("读取已保存的 Key", "read"), ("保存当前 Key", "save"),
+                                 ("删除已保存的 Key", "delete")):
+            menu.addAction(label, lambda checked=False, op=operation: self.use_vault(op, speech=speech))
+        button.setMenu(menu)
+        return button
+
     def build_settings(self):
         self.settings = GlassDialog("设置", self)
-        self.settings.resize(650, 535)
+        self.settings.resize(650, 635)
+        content = QWidget()
+        content.setObjectName("settingsContent")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(12)
+        scroll = QScrollArea()
+        scroll.setObjectName("settingsScroll")
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(content)
+        self.settings.body.addWidget(scroll, 1)
         options = glass_panel()
         option_layout = QVBoxLayout(options)
         option_layout.setContentsMargins(16, 12, 16, 12)
@@ -389,7 +433,7 @@ class CloudPane(QWidget):
         answer_options.addWidget(self.auto_answer, 1)
         answer_options.addWidget(self.manage_facts)
         option_layout.addLayout(answer_options)
-        self.settings.body.addWidget(options)
+        content_layout.addWidget(options)
         card = glass_panel()
         settings = QVBoxLayout(card)
         settings.setContentsMargins(16, 14, 16, 14)
@@ -401,7 +445,12 @@ class CloudPane(QWidget):
         settings.addLayout(source)
         settings.addWidget(plain_label("系统音频会包含同一播放设备上的其他声音。", "muted"))
         settings.addWidget(self.rule())
-        settings.addWidget(plain_label("API 服务", "sectionTitle"))
+        settings.addWidget(plain_label("语音识别", "sectionTitle"))
+        settings.addWidget(self.speech_model)
+        settings.addWidget(self.speech_help)
+        settings.addWidget(self.speech_key_row)
+        settings.addWidget(self.rule())
+        settings.addWidget(plain_label("AI 回答与翻译", "sectionTitle"))
         key_row = QHBoxLayout()
         key_row.addWidget(self.provider)
         key_row.addWidget(self.key, 1)
@@ -415,9 +464,8 @@ class CloudPane(QWidget):
         model_row.addWidget(self.api_test)
         settings.addLayout(model_row)
         settings.addWidget(self.api_status)
-        self.settings.body.addWidget(card)
-
-        self.settings.body.addStretch()
+        content_layout.addWidget(card)
+        content_layout.addStretch()
         done = QPushButton("完成")
         done.setObjectName("primaryAction")
         done.clicked.connect(self.settings.accept)
@@ -519,6 +567,17 @@ class CloudPane(QWidget):
     def selected_provider(self):
         return PROVIDERS[self.provider.currentData()]
 
+    def selected_speech(self):
+        return SPEECH_MODELS.get(self.speech_model.currentData())
+
+    def asr_key(self):
+        speech = self.selected_speech()
+        if speech is None or speech.provider is None:
+            return ""
+        if speech.provider is self.selected_provider():
+            return self.api_key()
+        return self.speech_key.text().strip() or os.environ.get(speech.provider.key_env, "").strip()
+
     def selected_language(self):
         return self.interview_language.currentData()
 
@@ -597,17 +656,42 @@ class CloudPane(QWidget):
         if self.state != "idle":
             self.stop_session()
         provider = self.selected_provider()
-        self.key.clear()
         self.set_model_options()
         self.workspace.setVisible(provider is QWEN)
         self.api_status.hide()
         self.approved_facts = ()
         self.approved_personal = PersonalInfo()
-        self.key.setPlaceholderText(f"{provider.label} API Key")
-        self.asr_status.setText("转写未连接" if provider is OPENAI else "本地转写未启动")
         self.text_status.setText(f"{provider.label} 文本 API 未连接")
+        self.speech_changed(load_text_key=True)
+
+    def speech_changed(self, _index=None, *, load_text_key=False):
+        speech = self.selected_speech()
+        provider = self.selected_provider()
+        speech_provider = speech.provider if speech and speech.provider is not provider else None
+        speech_key_changed = speech_provider is not self.speech_key_provider
+        previous = {
+            old: (field.text(), field.isModified())
+            for old, field in ((self.text_key_provider, self.key), (self.speech_key_provider, self.speech_key))
+            if old is not None and field.text()
+        }
+        for old, new, field in ((self.text_key_provider, provider, self.key),
+                                (self.speech_key_provider, speech_provider, self.speech_key)):
+            if old is not new:
+                value, modified = previous.get(new, ("", False))
+                with QSignalBlocker(field):
+                    field.setText(value)
+                    field.setModified(modified)
+            if new is not None:
+                field.setPlaceholderText(f"{new.label} API Key")
+        self.text_key_provider = provider
+        self.speech_key_provider = speech_provider
+        self.speech_key_row.setVisible(speech_provider is not None)
+        self.asr_status.setText("转写未连接" if speech else "请选择语音识别模型")
         if self.preferences_ready and not self.closing:
-            self.use_vault("read")
+            if load_text_key:
+                self.use_vault("read", all_missing=True)
+            elif speech_key_changed and speech_provider is not None and not self.speech_key.text():
+                self.use_vault("read", speech=True)
         self.controls()
 
     def controls(self):
@@ -620,7 +704,8 @@ class CloudPane(QWidget):
         self.interview_language.setEnabled(configurable and self.preferences_ready and self.state == "idle")
         self.history.setColumnHidden(1, language == "zh")
         for widget in (self.source, self.refresh, self.provider, self.model, self.workspace, self.key,
-                       self.vault_button, self.auto_answer):
+                       self.vault_button, self.auto_answer, self.speech_model, self.speech_key,
+                       self.speech_vault_button):
             widget.setEnabled(configurable)
         self.manage_facts.setEnabled(configurable and self.state == "idle" and self.preferences_ready)
         if self.state != self.reported_state:
@@ -631,20 +716,40 @@ class CloudPane(QWidget):
         api_ready = bool(configurable and self.api_key() and endpoint_valid)
         self.api_test.setEnabled(api_ready)
         self.model_refresh.setEnabled(api_ready and bool(self.selected_provider().models_url))
-        ready = bool(self.source.currentData() and self.api_key() and endpoint_valid)
+        speech = self.selected_speech()
+        provider = self.selected_provider()
+        asr_issue = ""
+        if speech is None:
+            asr_issue = "请选择语音识别模型。"
+            help_text = asr_issue
+        elif language not in speech.languages:
+            asr_issue = f"{speech.label} 不支持当前面试语言。"
+            help_text = asr_issue
+        elif speech.provider is None:
+            help_text = "音频在本机转写，需自行安装本地组件和模型。"
+        else:
+            if not self.asr_key():
+                asr_issue = f"请填写 {speech.provider.label} 的 API Key。"
+            mode_hint = "停顿后提交整段音频。" if speech.provider is DEEPSEEK else "边听边显示实时字幕。"
+            if speech.provider is provider:
+                help_text = f"{mode_hint} 与 AI 回答共用 {provider.label} 的 Key。"
+            else:
+                help_text = f"{mode_hint} 使用 {speech.provider.label} 的 Key。"
+        self.speech_help.setText(help_text)
+        ready = bool(self.source.currentData() and self.api_key() and endpoint_valid and not asr_issue)
         can_start = (idle and ready and self.capture_available and not self.personal_busy
                      and self.state in {"idle", "paused"})
         self.start.setEnabled(can_start)
-        provider = self.selected_provider()
-        mode = "云端监听" if provider is OPENAI else "本地转写"
+        self.start.setToolTip(asr_issue)
+        mode = "本地转写" if speech and speech.provider is None else "云端监听"
         self.start.setText(("恢复" if self.state == "paused" else "确认并开始") + mode)
-        data_route = ("所选音频会发送至 OpenAI 转写。"
-                      if provider is OPENAI else "音频在本机转写。")
-        profile_notice = ("生成回答时会向该服务商发送相关面试资料。"
+        data_route = (f"所选音频会发送至 {speech.provider.label} 转写。"
+                      if speech and speech.provider else "音频在本机转写。")
+        profile_notice = (f"生成回答时会向 {provider.label} 发送相关面试资料。"
                           if self.saved_personal or self.approved_facts else "")
         self.capture_notice.setText(
             f"开始前请确认已取得必要同意。{data_route}{INTERVIEW_LANGUAGES[language]}文字可发送至 {provider.label}。"
-            f"{profile_notice}"
+            f"{profile_notice}" if speech else asr_issue
         )
         self.capture_notice.setVisible(can_start and self.state == "idle")
         self.pause.setEnabled(self.state == "active")
@@ -707,7 +812,8 @@ class CloudPane(QWidget):
                                  facts=self.approved_facts, personal_info=self.approved_personal,
                                  provider=self.selected_provider(), answer_level=self.answer_level.currentData(),
                                  model=self.selected_model(), workspace=self.workspace.text().strip(),
-                                 language=self.selected_language())
+                                 language=self.selected_language(), speech_model=self.speech_model.currentData(),
+                                 speech_key=self.asr_key())
         self.worker.status.connect(self.set_status)
         self.worker.partial_transcript.connect(self.add_partial_transcript)
         self.worker.transcript.connect(self.add_transcript)
@@ -888,40 +994,55 @@ class CloudPane(QWidget):
                     row.answer_status = "回答已取消"
                     self.mark_changed(key)
 
-    def use_vault(self, operation):
+    def use_vault(self, operation, *, speech=False, all_missing=False):
         if self.credential_worker is not None or self.settings_worker is not None:
             return
-        key = self.key.text().strip() if operation == "save" else ""
-        provider = self.selected_provider()
+        bindings = ((self.key, self.text_key_provider), (self.speech_key, self.speech_key_provider))
+        if all_missing:
+            fields = tuple((field, provider) for field, provider in bindings
+                           if provider and not field.text())
+        else:
+            field, provider = bindings[int(speech)]
+            fields = ((field, provider),) if provider else ()
+        if not fields:
+            return
+        requests = tuple((field.text().strip() if operation == "save" else "", provider)
+                         for field, provider in fields)
         self.vault_operation = operation
-        self.vault_provider = provider
-        self.credential_worker = PrivateIO(lambda: credential(operation, key, provider), self)
+        self.vault_fields = fields
+        self.credential_worker = PrivateIO(
+            lambda: tuple(credential(operation, key, provider) for key, provider in requests), self,
+        )
         self.credential_worker.result.connect(self.vault_result)
-        self.credential_worker.failed.connect(self.text_status.setText)
+        self.credential_worker.failed.connect((self.asr_status if speech else self.text_status).setText)
         self.credential_worker.finished.connect(self.vault_finished)
         self.controls()
         self.credential_worker.start()
 
     @Slot(object)
-    def vault_result(self, value):
-        if self.vault_provider is not self.selected_provider():
-            return
+    def vault_result(self, values):
         operation = self.vault_operation
-        if operation == "read" and value:
-            self.key.setText(value)
-        elif operation == "delete":
-            self.key.clear()
-        elif operation == "save":
-            self.key.setModified(False)
-        self.text_status.setText({"read": "已读取已保存的 Key" if value else "未找到已保存的 Key",
-                                  "save": "Key 已保存到 Windows 凭据管理器",
-                                  "delete": "已清除保存的 Key"}[operation])
+        for (field, provider), value in zip(self.vault_fields, values):
+            is_text = field is self.key
+            current = self.text_key_provider if is_text else self.speech_key_provider
+            if provider is not current:
+                continue
+            if operation == "read" and value:
+                field.setText(value)
+            elif operation == "delete":
+                field.clear()
+            elif operation == "save":
+                field.setModified(False)
+            label = self.text_status if is_text else self.asr_status
+            status = {"read": "已读取已保存的 Key" if value else "未找到已保存的 Key",
+                      "save": "Key 已保存到 Windows 凭据管理器", "delete": "已清除保存的 Key"}[operation]
+            label.setText(f"{provider.label} · {status}")
 
     def vault_finished(self):
         self.credential_worker.deleteLater()
         self.credential_worker = None
         self.vault_operation = ""
-        self.vault_provider = None
+        self.vault_fields = ()
         self.controls()
         self.idle.emit()
 
@@ -941,6 +1062,14 @@ class CloudPane(QWidget):
         self.audio_selection = (preferences.audio_name, preferences.audio_loopback)
         with QSignalBlocker(self.provider):
             self.provider.setCurrentIndex(self.provider.findData(preferences.provider))
+        speech_code = preferences.speech_model
+        if not speech_code:
+            if preferences.provider == "openai":
+                speech_code = "openai"
+            elif not getattr(sys, "frozen", False) and local_model_available():
+                speech_code = "local"
+        with QSignalBlocker(self.speech_model):
+            self.speech_model.setCurrentIndex(max(0, self.speech_model.findData(speech_code)))
         self.auto_answer.setChecked(preferences.auto_answer)
         self.theme.setCurrentIndex(self.theme.findData(preferences.theme))
         self.answer_level.setCurrentIndex(self.answer_level.findData(preferences.answer_level))
@@ -956,17 +1085,20 @@ class CloudPane(QWidget):
             tuple((code, self.model_choices[code]) for code in PROVIDERS if code in self.model_choices),
             self.workspace.text().strip(),
             self.selected_language(),
+            self.speech_model.currentData(),
         )
         changed = preferences != self.preferences
-        key = self.key.text().strip() if self.key.isModified() else ""
-        if not changed and not key:
+        keys = tuple((provider, field.text().strip())
+                     for provider, field in ((self.text_key_provider, self.key),
+                                             (self.speech_key_provider, self.speech_key))
+                     if provider and field.isModified() and field.text().strip())
+        if not changed and not keys:
             return
-        provider = self.selected_provider()
 
         def save():
             if changed:
                 save_preferences(preferences)
-            if key:
+            for provider, key in keys:
                 credential("save", key, provider)
             return preferences
 
@@ -976,6 +1108,7 @@ class CloudPane(QWidget):
     def preferences_saved(self, preferences):
         self.preferences = preferences
         self.key.setModified(False)
+        self.speech_key.setModified(False)
 
     def settings_finished(self):
         self.settings_worker.deleteLater()

@@ -106,7 +106,8 @@ QHeaderView::section {
     border: none; border-bottom: 1px solid $edge;
 }
 QTableCornerButton::section { background: $table_header; border: none; }
-QScrollArea#captionScroll, QWidget#captionContent { background: transparent; }
+QScrollArea#captionScroll, QWidget#captionContent,
+QScrollArea#settingsScroll, QWidget#settingsContent { background: transparent; }
 QSplitter::handle { background: transparent; }
 QSplitter::handle:hover { background: $edge; border-radius: 4px; }
 QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }

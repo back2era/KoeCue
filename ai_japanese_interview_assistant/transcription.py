@@ -105,14 +105,17 @@ class TurnCutter:
 
 
 class AudioProcessor:
-    def __init__(self, source_rate, channels):
+    def __init__(self, source_rate, channels, *, continuous=False):
         import numpy as np
         from soxr import ResampleStream
         import webrtcvad
 
         self._np = np
         self._channels = channels
-        self._asr = ResampleStream(source_rate, 24000, 1, dtype="float32")
+        self._asr = ResampleStream(source_rate, 16000 if continuous else 24000, 1, dtype="float32")
+        self._continuous = continuous
+        if continuous:
+            return
         self._vad_rate = ResampleStream(source_rate, 16000, 1, dtype="float32")
         self._vad = webrtcvad.Vad(2)
         self._cutter = TurnCutter()
@@ -123,6 +126,10 @@ class AudioProcessor:
         np = self._np
         samples = np.frombuffer(pcm, dtype="<i2").reshape(-1, self._channels)
         mono = samples.mean(axis=1, dtype=np.float32)
+        if self._continuous:
+            output = self._asr.resample_chunk(mono, last=last)
+            frame = np.clip(np.rint(output), -32768, 32767).astype("<i2").tobytes()
+            return [frame] if frame else []
         for converter, buffer in ((self._asr, self._asr_bytes), (self._vad_rate, self._vad_bytes)):
             output = converter.resample_chunk(mono, last=last)
             buffer.extend(np.clip(np.rint(output), -32768, 32767).astype("<i2").tobytes())
@@ -141,7 +148,7 @@ class AudioProcessor:
         return commands
 
     def finish_turn(self):
-        return self._cutter.finish()
+        return [] if self._continuous else self._cutter.finish()
 
 
 async def run_transcription(key, frames, on_event, on_ready=lambda: None, *,

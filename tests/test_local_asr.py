@@ -24,7 +24,7 @@ def test_chinese_decoder_reuses_the_same_model_without_japanese_hints(monkeypatc
             return [SimpleNamespace(text="请介绍你的项目。")], None
 
     monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=Model))
-    monkeypatch.setattr(local_asr, "decoder_model_directory", lambda: tmp_path)
+    monkeypatch.setattr(local_asr, "model_directory", lambda: tmp_path)
     for name in local_asr.MODEL_FILES:
         (tmp_path / name).touch()
 
@@ -35,20 +35,18 @@ def test_chinese_decoder_reuses_the_same_model_without_japanese_hints(monkeypatc
     assert all(options["hotwords"] is None and "简体中文" in options["initial_prompt"] for options in calls)
 
 
-def test_frozen_app_uses_complete_bundled_model_and_keeps_local_fallback(monkeypatch, tmp_path):
-    local = tmp_path / "LocalAppData"
-    packaged = tmp_path / "KoeCue"
-    bundled_model = packaged / "models" / "faster-whisper-base"
-    monkeypatch.setattr(local_asr, "app_directory", lambda: local)
-    monkeypatch.setattr(sys, "executable", str(packaged / "KoeCue.exe"))
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-    bundled_model.mkdir(parents=True)
-    for name in local_asr.MODEL_FILES:
-        (bundled_model / name).touch()
+def test_optional_model_is_found_only_after_it_is_installed(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_asr, "app_directory", lambda: tmp_path)
+    monkeypatch.setattr(local_asr, "find_spec", lambda name: object())
+    model = tmp_path / "models" / "faster-whisper-base"
 
-    assert local_asr.decoder_model_directory() == bundled_model
-    (bundled_model / "model.bin").unlink()
-    assert local_asr.decoder_model_directory() == local / "models" / "faster-whisper-base"
+    assert not local_asr.local_model_available()
+    model.mkdir(parents=True)
+    for name in local_asr.MODEL_FILES:
+        (model / name).touch()
+    assert local_asr.local_model_available()
+    monkeypatch.setattr(local_asr, "find_spec", lambda name: None)
+    assert not local_asr.local_model_available()
 
 
 def test_short_turns_finalize_and_the_uncommitted_tail_is_discarded():

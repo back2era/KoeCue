@@ -5,58 +5,22 @@ import importlib.metadata as metadata
 import json
 import os
 from pathlib import Path
-import platform
 import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 
 from ai_japanese_interview_assistant import APP_NAME, APP_VERSION
-from ai_japanese_interview_assistant.local_asr import MODEL_FILES, MODEL_REVISION, model_directory
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL_SHA256 = {
-    "config.json": "56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a",
-    "model.bin": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9",
-    "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
-    "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
-}
 
 
 def sha256(path):
     with path.open("rb") as data:
         return file_digest(data, "sha256").hexdigest()
-
-
-def validate_model(source):
-    for name in MODEL_FILES:
-        path = source / name
-        if not path.is_file() or sha256(path) != MODEL_SHA256[name]:
-            raise SystemExit(f"Missing or invalid model file: {path}\nExpected Whisper revision {MODEL_REVISION}.")
-
-
-def prepare_faster_whisper(build):
-    distribution = metadata.distribution("faster-whisper")
-    if distribution.version != "1.2.1":
-        raise SystemExit("The release patch requires faster-whisper 1.2.1.")
-    patched = build / "patched"
-    target = patched / "faster_whisper"
-    shutil.copytree(distribution.locate_file("faster_whisper"), target, ignore=shutil.ignore_patterns("__pycache__"))
-    audio = target / "audio.py"
-    source = audio.read_text(encoding="utf-8")
-    import_block = "import av\nimport numpy as np"
-    decoder_start = "    resampler = av.audio.resampler.AudioResampler("
-    if source.count(import_block) != 1 or source.count(decoder_start) != 1:
-        raise SystemExit("The faster-whisper audio source has changed. Review the release patch.")
-    # KoeCue sends float PCM arrays to WhisperModel. File decoding is outside this executable.
-    source = source.replace(import_block, "import numpy as np\n\ntry:\n    import av\nexcept ImportError:\n    av = None")
-    source = source.replace(decoder_start, "    if av is None:\n"
-                            "        raise RuntimeError('The KoeCue release accepts decoded PCM arrays only.')\n\n"
-                            + decoder_start)
-    audio.write_text(source, encoding="utf-8")
-    return patched
 
 
 def make_icon(path):
@@ -92,22 +56,21 @@ def version_resource(path):
 
 def copy_notices(release):
     notices = release / "licenses"
-    shutil.copytree(ROOT / "licenses", notices)
+    shutil.copytree(ROOT / "licenses", notices, ignore=shutil.ignore_patterns("Whisper-MIT.txt"))
     shutil.copy2(Path(sys.base_prefix) / "LICENSE.txt", notices / "Python-LICENSE.txt")
-    for requirements in ("requirements.txt", "requirements-local.txt"):
-        for line in (ROOT / requirements).read_text(encoding="utf-8").splitlines():
-            name, pinned, _ = line.partition("==")
-            if not pinned or name == "av":
+    for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
+        name, pinned, _ = line.partition("==")
+        if not pinned:
+            continue
+        distribution = metadata.distribution(name)
+        for file in distribution.files or ():
+            if (".." in file.parts or not re.match(r"(?i)(licen[cs]e|copying|notice|thirdparty)", file.name)
+                    or file.suffix.lower() not in {"", ".txt", ".md", ".rst"}
+                    or file.name == "LicenseRef-Qt-Commercial.txt"):
                 continue
-            distribution = metadata.distribution(name)
-            for file in distribution.files or ():
-                if (".." in file.parts or not re.match(r"(?i)(licen[cs]e|copying|notice|thirdparty)", file.name)
-                        or file.suffix.lower() not in {"", ".txt", ".md", ".rst"}
-                        or file.name == "LicenseRef-Qt-Commercial.txt"):
-                    continue
-                target = notices / name / file
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(distribution.locate_file(file), target)
+            target = notices / name / file
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(distribution.locate_file(file), target)
 
 
 def windows_system_path():
@@ -135,28 +98,26 @@ def verify(release, work):
     if not report.is_file():
         raise SystemExit(f"The executable did not produce a package check (exit {result.returncode}).")
     checks = json.loads(report.read_text(encoding="utf-8"))
-    if (result.returncode != 0 or checks.get("version") != APP_VERSION or not checks.get("bundled_model")
-            or not checks.get("local_inference") or checks.get("qt_platform") != "windows"
-            or checks.get("main_window_tabs") != 3):
+    if (result.returncode != 0 or checks.get("version") != APP_VERSION
+            or checks.get("bundled_whisper") is not False or checks.get("qt_platform") != "windows"
+            or checks.get("main_window_tabs") != 3
+            or checks.get("speech_models") != ["openai", "doubao", "qwen-3.1", "qwen-3.0", "deepseek"]):
         raise SystemExit(f"Packaged application failed its check:\n{json.dumps(checks, ensure_ascii=False, indent=2)}")
     print(f"Package check: {json.dumps(checks, ensure_ascii=False)}")
 
 
 def main():
-    if sys.platform != "win32" or sys.version_info[:2] != (3, 13) or platform.machine().lower() not in {"amd64", "x86_64"}:
+    if sys.platform != "win32" or sys.version_info[:2] != (3, 13) or sysconfig.get_platform() != "win-amd64":
         raise SystemExit("Build with Windows x64 Python 3.13.")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-dir", type=Path, default=model_directory(),
-                        help="Directory containing the four pinned Whisper model files.")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "dist",
+                        help="Directory for the verified ZIP (default: dist).")
     args = parser.parse_args()
-    source = args.model_dir.resolve()
-    validate_model(source)
 
     build_root = ROOT / "build"
     build_root.mkdir(exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="windows-", dir=build_root))
     print(f"Build workspace: {work}", flush=True)
-    patched = prepare_faster_whisper(work)
     icon = work / "koecue.ico"
     version = work / "version.txt"
     make_icon(icon)
@@ -166,20 +127,16 @@ def main():
     env = dict(os.environ, PATH=windows_system_path(), PYINSTALLER_CONFIG_DIR=str(work / "pyinstaller-cache"))
     subprocess.run([
         sys.executable, "-m", "PyInstaller", "--name", APP_NAME, "--onedir", "--windowed", "--noupx",
-        "--icon", str(icon), "--version-file", str(version), "--paths", str(patched),
+        "--icon", str(icon), "--version-file", str(version),
         "--distpath", str(work / "release"), "--workpath", str(work / "objects"), "--specpath", str(work),
-        "--exclude-module", "av", "--exclude-module", "pytest",
-        "--collect-data", "faster_whisper", "--collect-binaries", "ctranslate2",
+        "--exclude-module", "pytest", "--exclude-module", "av", "--exclude-module", "faster_whisper",
+        "--exclude-module", "ctranslate2", "--exclude-module", "onnxruntime",
+        "--exclude-module", "huggingface_hub", "--exclude-module", "tokenizers",
         "--copy-metadata", "keyring", str(ROOT / "launch.pyw"),
     ], cwd=ROOT, env=env, check=True)
     release = work / "release" / APP_NAME
-    if any(path.name.lower().startswith(("avcodec-", "avformat-", "libx264-", "libx265-"))
-           for path in release.rglob("*.dll")):
-        raise SystemExit("The release unexpectedly contains multimedia libraries from the PyAV wheel.")
-    model = release / "models" / "faster-whisper-base"
-    model.mkdir(parents=True)
-    for name in MODEL_FILES:
-        shutil.copy2(source / name, model / name)
+    if (release / "models").exists() or any(release.rglob("model.bin")):
+        raise SystemExit("The cloud release unexpectedly contains bundled model weights.")
     for name in ("README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"):
         shutil.copy2(ROOT / name, release / name)
     shutil.copytree(ROOT / "docs" / "images", release / "docs" / "images")
@@ -192,7 +149,7 @@ def main():
 
     archive_name = f"{APP_NAME}-{APP_VERSION}"
     archive = Path(shutil.make_archive(str(work / archive_name), "zip", release.parent, APP_NAME))
-    output = ROOT / "dist"
+    output = args.output_dir.resolve()
     output.mkdir(exist_ok=True)
     final = output / archive.name
     archive.replace(final)

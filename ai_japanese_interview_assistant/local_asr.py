@@ -3,9 +3,8 @@ import argparse
 import asyncio
 from collections import deque
 from contextlib import aclosing
+from importlib.util import find_spec
 import os
-from pathlib import Path
-import sys
 
 from .audio import AudioError
 from .config import DEFAULT_INTERVIEW_LANGUAGE
@@ -32,13 +31,8 @@ def _model_complete(directory):
     return all((directory / name).is_file() for name in MODEL_FILES)
 
 
-def decoder_model_directory():
-    local = model_directory()
-    if getattr(sys, "frozen", False):
-        bundled = Path(sys.executable).parent / "models" / local.name
-        if _model_complete(bundled):
-            return bundled
-    return local
+def local_model_available():
+    return find_spec("faster_whisper") is not None and _model_complete(model_directory())
 
 
 def load_decoder(*, language=DEFAULT_INTERVIEW_LANGUAGE):
@@ -47,11 +41,9 @@ def load_decoder(*, language=DEFAULT_INTERVIEW_LANGUAGE):
     except (ImportError, OSError) as exc:
         raise LocalAsrError("本地语音组件不可用。请按 README 安装 requirements-local.txt。") from exc
 
-    directory = decoder_model_directory()
+    directory = model_directory()
     if not _model_complete(directory):
-        message = ("找不到本地语音模型。请完整解压 KoeCue 发布包。"
-                   if getattr(sys, "frozen", False) else "尚未安装本地语音模型。请按 README 下载模型。")
-        raise LocalAsrError(message)
+        raise LocalAsrError("尚未安装本地语音模型。请按 README 下载模型。")
 
     import numpy as np
     import soxr

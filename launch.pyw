@@ -1,4 +1,5 @@
 """Launch KoeCue from a Windows taskbar shortcut or the packaged executable."""
+from importlib.util import find_spec
 import json
 from pathlib import Path
 import sys
@@ -9,14 +10,13 @@ from ai_japanese_interview_assistant import APP_VERSION
 
 
 def verify_installation(report):
-    """Exercise the bundled Qt, WASAPI, and Whisper components without capturing audio."""
+    """Verify the packaged Qt, WASAPI and speech settings without starting a session."""
     window = None
     try:
         from PySide6.QtWidgets import QApplication
         from ai_japanese_interview_assistant import cloud_gui
         from ai_japanese_interview_assistant.__main__ import MainWindow, configure_application
         from ai_japanese_interview_assistant.audio import list_devices
-        from ai_japanese_interview_assistant.local_asr import decoder_model_directory, load_decoder
 
         app = QApplication([])
         configure_application(app)
@@ -25,13 +25,11 @@ def verify_installation(report):
         window.show()
         app.processEvents()
         devices = list_devices()
-        decode = load_decoder()
-        decode(bytes(48000))
-        model = decoder_model_directory()
+        speech = window.cloud.speech_model
         result = {"version": APP_VERSION, "qt_platform": app.platformName(), "devices": len(devices),
                   "main_window_tabs": window.tabs.count(),
-                  "bundled_model": model.is_relative_to(Path(sys.executable).parent),
-                  "local_inference": True}
+                  "speech_models": [speech.itemData(i) for i in range(1, speech.count())],
+                  "bundled_whisper": find_spec("faster_whisper") is not None}
     except Exception:
         result = {"error": traceback.format_exc()}
     finally:

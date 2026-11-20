@@ -2,17 +2,20 @@
 import asyncio
 from functools import partial
 from threading import Event
+
+import httpx
 from time import monotonic
 
 from PySide6.QtCore import QThread, Signal
 
 from .answer_format import DEFAULT_ANSWER_LEVEL
 from .audio import AudioBuffer, AudioError, capture, check_topology
-from .config import DEFAULT_INTERVIEW_LANGUAGE, OPENAI
+from .config import DEFAULT_INTERVIEW_LANGUAGE, DEEPSEEK, OPENAI, QWEN
 from .interview import InterviewService
 from .local_asr import LocalAsrError, load_decoder, run_local_transcription
 from .personal import PersonalInfo
 from .services import TextService, client_for, error_message
+from .speech import DOUBAO, SPEECH_MODELS, run_deepseek, run_doubao, run_qwen
 from .telemetry import Event as LogEvent, record
 from .transcription import AudioProcessor, LOCAL_PREVIEW_EVENT, RealtimeError, TranscriptBook, run_transcription
 
@@ -32,12 +35,15 @@ class LiveWorker(QThread):
 
     def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False,
                  facts=(), personal_info=PersonalInfo(), provider=OPENAI, answer_level=DEFAULT_ANSWER_LEVEL,
-                 model="", workspace="", language=DEFAULT_INTERVIEW_LANGUAGE):
+                 model="", workspace="", language=DEFAULT_INTERVIEW_LANGUAGE,
+                 speech_model="openai", speech_key=None):
         super().__init__(parent)
         self.generation = generation
         self.session_id = session_id
         self.device = device
         self.key = key
+        self.speech = SPEECH_MODELS[speech_model]
+        self.speech_key = key if speech_key is None and self.speech.provider is provider else speech_key or ""
         self.provider = provider
         self.model = model
         self.workspace = workspace
@@ -95,7 +101,7 @@ class LiveWorker(QThread):
         except AudioError as exc:
             record(LogEvent.AUDIO_ERROR)
             self.status.emit("audio", str(exc))
-            self.status.emit("asr", "转写连接已关闭" if self.provider is OPENAI else "本地转写已停止")
+            self.status.emit("asr", "转写已停止")
         except RealtimeError as exc:
             record(LogEvent.API_ERROR)
             self.status.emit("asr", str(exc))
@@ -106,7 +112,7 @@ class LiveWorker(QThread):
             self.status.emit("asr", error_message(exc))
         finally:
             self.buffer.close()
-            self.key = ""
+            self.key = self.speech_key = ""
             self._clear_profile()
             self.loop = None
 
@@ -120,32 +126,48 @@ class LiveWorker(QThread):
             self.interview = InterviewService(self.service, language=self.language)
             started = monotonic()
             try:
-                if self.provider is OPENAI:
-                    self.status.emit("asr", "正在连接转写服务…")
-
-                    def connected():
-                        record(LogEvent.REALTIME_READY, monotonic() - started)
-                        self.status.emit("asr", "转写 API 已连接")
-
-                    await run_transcription(
-                        self.key, self.audio_commands(), self.on_event, connected,
-                        on_ending=self.stop_text_and_audio, language=self.language,
-                    )
-                else:
-                    self.status.emit("asr", "正在加载本地语音模型…")
-                    decoder = await asyncio.to_thread(load_decoder, language=self.language)
-                    if self.isInterruptionRequested():
-                        return
-                    self.status.emit("asr", "本地转写已就绪，正在接收语音")
-                    await run_local_transcription(
-                        decoder, self.audio_commands(), self.on_event,
-                        preview_decode=partial(decoder, preview=True), on_ending=self.stop_text_and_audio,
-                    )
+                await self.transcribe(started)
             finally:
                 self.stop_text_and_audio()
                 await asyncio.gather(*self.jobs.values(), return_exceptions=True)
-                if self.provider is OPENAI:
+                if self.speech.provider is not None:
                     record(LogEvent.REALTIME_END, monotonic() - started)
+
+    async def transcribe(self, started):
+        provider = self.speech.provider
+        if self.language not in self.speech.languages:
+            raise RealtimeError("请选择支持当前面试语言的转写模型。")
+        if provider is not None and not self.speech_key:
+            raise RealtimeError(f"请先设置 {provider.label} 的转写 API Key。")
+
+        def connected():
+            record(LogEvent.REALTIME_READY, monotonic() - started)
+            self.status.emit("asr", f"{provider.label} 转写 API 已连接")
+
+        frames = self.audio_commands()
+        if provider is None:
+            self.status.emit("asr", "正在加载本地语音模型…")
+            decoder = await asyncio.to_thread(load_decoder, language=self.language)
+            if not self.isInterruptionRequested():
+                self.status.emit("asr", "本地转写已就绪，正在接收语音")
+                await run_local_transcription(
+                    decoder, frames, self.on_event, preview_decode=partial(decoder, preview=True),
+                    on_ending=self.stop_text_and_audio,
+                )
+        else:
+            self.status.emit("asr", f"正在连接 {provider.label} 转写…")
+            if provider is OPENAI:
+                await run_transcription(self.speech_key, frames, self.on_event, connected,
+                                        on_ending=self.stop_text_and_audio, language=self.language)
+            elif provider is DOUBAO:
+                await run_doubao(self.speech_key, frames, self.on_event, connected)
+            elif provider is QWEN:
+                await run_qwen(self.speech_key, frames, self.on_event, connected,
+                               model=self.speech, language=self.language)
+            elif provider is DEEPSEEK:
+                self.status.emit("asr", "DeepSeek 分段转写待命")
+                async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=5.0)) as client:
+                    await run_deepseek(self.speech_key, frames, self.on_event, client)
 
     def stop_text_and_audio(self):
         self.requestInterruption()
@@ -157,7 +179,9 @@ class LiveWorker(QThread):
 
     async def audio_commands(self):
         self.status.emit("audio", "正在打开音频设备…")
-        processor = AudioProcessor(self.device.rate, self.device.channels)
+        continuous = self.speech.continuous
+        processor = AudioProcessor(self.device.rate, self.device.channels, continuous=continuous)
+        silence = bytes(round(self.device.rate * 0.02) * self.device.channels * 2) if continuous else b""
         with capture(self.device, self.buffer) as stream:
             if self.isInterruptionRequested():
                 return
@@ -165,6 +189,7 @@ class LiveWorker(QThread):
             self.status.emit("audio", "音频 · 正在监听")
             last_frame = monotonic()
             next_topology = last_frame + 1
+            next_silence = last_frame + 0.04
             flushed = False
             while not self.isInterruptionRequested():
                 if monotonic() >= next_topology:
@@ -179,9 +204,15 @@ class LiveWorker(QThread):
                             yield command
                         flushed = True
                         self.status.emit("audio", "音频 · 当前没有输入帧")
+                    if continuous and monotonic() >= next_silence:
+                        # WASAPI loopback may stop delivering frames when playback is idle.
+                        for frame in processor.push(silence):
+                            yield frame
+                        next_silence = monotonic() + 0.02
                     await asyncio.sleep(0.01)
                     continue
                 last_frame = monotonic()
+                next_silence = last_frame + 0.04
                 if flushed:
                     self.status.emit("audio", "音频 · 正在监听")
                 flushed = False

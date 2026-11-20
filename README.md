@@ -2,7 +2,7 @@
 
 **实时面试字幕与口述建议。** 支持日语面试的日中翻译与双语建议，以及中文面试的普通话转写和简体中文建议。适合模拟面试及已获必要同意的线上面试。
 
-**Windows 11 x64** · **多语言 Whisper 模型** · **[MIT License](LICENSE)**
+**Windows 11 x64** · **可选语音识别模型** · **[MIT License](LICENSE)**
 
 [下载 Windows ZIP](https://github.com/back2era/KoeCue/releases) · [首次使用](#首次使用) · [支持的 API](#支持的-api) · [源码运行与打包](#源码运行与打包)
 
@@ -16,21 +16,19 @@
 2. 在 Windows 文件资源管理器中右键 ZIP，选择「全部解压缩」。
 3. 打开解压后的 `KoeCue` 文件夹，双击 **`KoeCue.exe`**。
 
-ZIP 已包含运行库和 Whisper 模型。无需安装 Python、输入 PowerShell 命令或另行下载语音模型。请保留同目录的 `_internal` 和 `models` 文件夹。
-
-中文面试模式可通过当前源码运行。GitHub 上已有的 0.0.1 ZIP 对应早期日语版。
+GitHub 已发布的 0.0.1 ZIP 对应早期日语版，内含 Whisper。中文面试和独立的语音识别模型选择可通过当前源码运行。当前源码的新构建只带运行库，解压后请保留同目录的 `_internal` 文件夹。
 
 ## 首次使用
 
-1. **设置语言和 API。** 打开「实时面试 → 设置」，在「面试语言」选择「日语面试」或「中文面试」，然后选择服务商、填写自己的 API Key 并选定模型。点「测试连接」可用当前语言的固定样例确认文本 API。
+1. **设置语言和模型。** 打开「实时面试 → 设置」，选择面试语言、语音识别模型和 AI 回答模型。只有选了不同的云端服务商，才会分别填写两家的 Key。点「测试文本 API」可以检查回答和翻译的连接，语音识别在开始监听时连接。
 2. **选择音源。** 要听会议声音，选择 Teams、Zoom 或浏览器正在使用的**系统播放设备**。用自己的声音练习时，选择麦克风。可先去「音频诊断」确认电平有变化。
-3. **开始监听。** 确认已取得必要同意，点「完成」保存设置，再在主界面点开始。日语模式实时显示日语原文，断句后显示中译和双语建议。中文模式实时显示中文原文，断句后直接生成中文建议。两种模式复用同一个本地 Whisper 模型。切换语言前请先停止监听。
+3. **开始监听。** 确认已取得必要同意，点「完成」保存设置，再在主界面点开始。日语模式显示日语原文，断句后显示中译和双语建议。中文模式显示中文原文，断句后直接生成中文建议。选择分段转写时，停顿后才显示原文。切换语言或模型前请先停止监听。
 4. **回看或复制。** 点击右侧历史中的某一段，可回看字幕和对应建议。点「回到最新」继续跟随实时内容，点「复制回答」可复制该段的推荐回答。使用完毕后点「停止」。
 
 <details>
-<summary>查看设置界面</summary>
+<summary>查看 0.0.1 版设置界面</summary>
 
-![KoeCue 设置界面，包含音源、API 服务商、文本模型和连接测试。](docs/images/settings.png)
+![KoeCue 旧版设置界面，包含音源、API 服务商、文本模型和连接测试。](docs/images/settings.png)
 
 </details>
 
@@ -38,7 +36,21 @@ ZIP 已包含运行库和 Whisper 模型。无需安装 Python、输入 PowerShe
 
 ## 支持的 API
 
-只需要所选服务商的 API Key。翻译和回答共用所选文本模型，模型可从预设中选择或手动输入 ID。
+### 语音识别
+
+| 可选模型 | 出字方式与语种 | Key 环境变量 |
+| --- | --- | --- |
+| [豆包 2.0](https://docs.volcengine.com/docs/doubao-voice/large-model-streaming-automatic-speech-recognition-api-1?lang=zh) | 中文双向实时，使用新版豆包语音控制台小时版 | `DOUBAO_ASR_API_KEY` |
+| [Qwen-Audio 3.1 / 3.0 Streaming](https://help.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide) | 中文、日语双向实时，使用百炼北京地域 Key | `DASHSCOPE_API_KEY` |
+| [OpenAI GPT-Live-Transcribe](https://developers.openai.com/api/docs/guides/realtime-transcription) | 中文、日语实时 | `OPENAI_API_KEY` |
+| [DeepSeek 语音识别](https://api-docs.deepseek.com/zh-cn/guides/asr/) | 中文、日语，停顿后提交一段 | `DEEPSEEK_API_KEY` |
+| 本地 Whisper | 中文、日语。源码可选，需自行安装 | 无 |
+
+例如，用豆包转写、DeepSeek 回答，只需新增豆包语音 Key。用同一个服务商转写和回答时，两项共用该服务商的 Key。云端转写会发送所选音源的音频，并按服务商规则计费。
+
+### AI 回答与翻译
+
+翻译和回答共用所选文本模型，模型可从预设中选择或手动输入 ID。
 
 | 服务商 | 默认文本模型 | Key 环境变量 |
 | --- | --- | --- |
@@ -51,26 +63,26 @@ ZIP 已包含运行库和 Whisper 模型。无需安装 Python、输入 PowerShe
 | [MiniMax](https://platform.minimax.cn/docs/api-reference/text-openai-api) | `MiniMax-M3.1-Flash` | `MINIMAX_API_KEY` |
 | [Google Gemini](https://aistudio.google.com/docs/openai) | `gemini-3.8-flash` | `GEMINI_API_KEY` |
 
-**OpenAI** 使用云端语音转写。**其他服务商**使用本地 Whisper 转写，将转写文本和生成建议所需的相关面试资料发送给所选服务商。日语模式的翻译及两种模式的 AI 回答都需要网络，具体模型取决于 API 账户权限和服务地区。
+日语模式的翻译及两种模式的 AI 回答都需要网络，具体模型取决于 API 账户权限和服务地区。
 
 ## 常见问题
 
 - **会议有声音，字幕没有出现。** 到「音频诊断」确认电平，并核对会议软件输出设备。系统音频采集的是该播放设备的混音，包括经过同一设备的其他声音。
-- **只有 DeepSeek 或千问的 Key。** 选择对应服务商即可用本地 Whisper。千问使用中国内地百炼 Key，北京业务空间 ID 可选。
-- **连接测试提示权限、模型或额度问题。** 核对当前服务商、Key 和模型 ID，再查账户是否开通对应 API 和额度。
+- **只有 DeepSeek 或千问的 Key。** 可分别选 DeepSeek 分段转写或千问实时转写，并与同一家服务商的回答模型共用 Key。千问语音使用百炼北京地域 Key。
+- **API 提示权限、模型或额度问题。** 核对报错来自语音识别还是 AI 回答，再检查对应服务商的 Key、模型权限和额度。
 - **暂停后无法点「生成回答」。** 点「恢复」，选中该段历史，再重试。草稿核验失败或内容不完整时，应用会自动重写一次。
 
 ## 隐私与发布状态
 
-音频和会话历史默认只在内存中。个人资料和设置保存在 `%LOCALAPPDATA%\AIJapaneseInterviewAssistant`，Key 按服务商分别存入 Windows 凭据管理器。确认开始监听后，应用才采集音频。生成回答时按问题发送相关资料，保存资料时不会发送请求。服务商的数据保留规则取决于所用 API 和账户配置。
+音频和会话历史默认只在内存中。个人资料和设置保存在 `%LOCALAPPDATA%\AIJapaneseInterviewAssistant`，Key 按服务商分别存入 Windows 凭据管理器。确认开始监听后，应用才采集音频。开始前会显示音频和文字分别发送给哪家服务商。生成回答时按问题发送相关资料，保存资料时不会发送请求。服务商的数据保留规则取决于所用 API 和账户配置。
 
 | 状态 | 范围 |
 | --- | --- |
-| 已完成 | Windows 便携打包、本地 Whisper、日语和普通话实时转写、日中字幕、历史与回答建议、五套主题和八家文本 API 适配 |
+| 已完成 | Windows 便携构建、独立语音识别模型选择、日语和普通话字幕、日中翻译、历史与回答建议、五套主题和八家文本 API 适配 |
 | 待验证 | 各服务商真实 API、实际会议采集、30 分钟联调、端到端延迟和无 Python 的干净 Windows 11 |
 | 后续 | 按应用独立采集 |
 
-Windows 11 x64 完整离线回归 174 项通过，覆盖设备枚举、界面、字幕、资料保存、技术语境核验和 API 协议替身。现有 Whisper 模型通过中文配置的预览和定稿 PCM 推理检查。
+Windows 11 x64 离线回归 182 项通过，覆盖设备枚举、界面、字幕、资料保存、技术语境核验、双服务商密钥和语音 API 协议。便携构建通过窗口启动和音源枚举检查，ZIP 中无 Whisper 运行库或模型。云端识别效果与延迟待用有权限的账户实测。
 
 ## 源码运行与打包
 
@@ -81,12 +93,18 @@ Windows 11 x64 完整离线回归 174 项通过，覆盖设备枚举、界面、
 
 ```powershell
 py -3.13 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-local.txt
-.\.venv\Scripts\python.exe -m ai_japanese_interview_assistant.local_asr --download-model
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m ai_japanese_interview_assistant
 ```
 
-打包脚本从本机缓存读取并校验固定修订的 Whisper 模型，也可用 `--model-dir` 指定目录。它会构建 Windows 窗口程序，运行本地启动、设备枚举和 Whisper 推理检查，再输出 `dist/KoeCue-0.0.1.zip`。
+默认源码安装使用云端转写。已有完整本地模型和可选运行库的源码用户仍能选择「本地 Whisper」。首次使用该选项时，在源码环境单独安装运行库和模型。
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-local.txt
+.\.venv\Scripts\python.exe -m ai_japanese_interview_assistant.local_asr --download-model
+```
+
+打包脚本会构建 Windows 窗口程序，验证可启动、可枚举设备并显示云端转写选项，再输出 `dist/KoeCue-0.0.1.zip`。默认源码安装和新 ZIP 均无需 Whisper 运行库或模型。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
@@ -112,4 +130,4 @@ $env:AIJA_TEST_DEVICES = '1'
 
 ## 许可证
 
-KoeCue 源码使用 [MIT License](LICENSE)。随包运行库和 Whisper 模型的许可证及源码链接见 [第三方组件说明](THIRD_PARTY_NOTICES.md)。
+KoeCue 源码使用 [MIT License](LICENSE)。随包运行库与可选本地组件的许可证和源码链接见 [第三方组件说明](THIRD_PARTY_NOTICES.md)。
