@@ -34,7 +34,7 @@ ZIP 已包含运行库和 Whisper 模型。无需安装 Python、输入 PowerShe
 
 </details>
 
-想让回答结合自己的经历时，在「个人信息」填写背景或导入中文、日文、英文简历，点「保存个人信息」，再授权本次要分享的条目。可在设置中选择 N5–N1 的日语难度。资料不足时，学历、经历等问题可以给待填模板。
+想让回答结合自己的经历时，在「个人信息」填写应聘岗位、面试场景和背景，或导入中文、日文、英文简历，点「保存个人信息」。确认开始监听后，KoeCue 会自动用已保存的资料生成建议，并按问题挑选相关片段。以电源研发面试为例，应聘岗位和相关项目会帮助模型理解 DCM、CCM 等缩写。可在设置中调整自动回答和 N5–N1 的日语难度。资料不足时，学历、经历等问题可以给待填模板。
 
 ## 支持的 API
 
@@ -51,7 +51,7 @@ ZIP 已包含运行库和 Whisper 模型。无需安装 Python、输入 PowerShe
 | [MiniMax](https://platform.minimax.cn/docs/api-reference/text-openai-api) | `MiniMax-M3.1-Flash` | `MINIMAX_API_KEY` |
 | [Google Gemini](https://aistudio.google.com/docs/openai) | `gemini-3.8-flash` | `GEMINI_API_KEY` |
 
-**OpenAI** 使用云端语音转写。**其他服务商**使用本地 Whisper 转写，仅将转写文本和单独授权的相关资料发送给所选服务商。日语模式的翻译及两种模式的 AI 回答都需要网络，具体模型取决于 API 账户权限和服务地区。
+**OpenAI** 使用云端语音转写。**其他服务商**使用本地 Whisper 转写，将转写文本和生成建议所需的相关面试资料发送给所选服务商。日语模式的翻译及两种模式的 AI 回答都需要网络，具体模型取决于 API 账户权限和服务地区。
 
 ## 常见问题
 
@@ -62,7 +62,7 @@ ZIP 已包含运行库和 Whisper 模型。无需安装 Python、输入 PowerShe
 
 ## 隐私与发布状态
 
-音频和会话历史默认只在内存中。个人资料和设置保存在 `%LOCALAPPDATA%\AIJapaneseInterviewAssistant`，Key 按服务商分别存入 Windows 凭据管理器。只在确认同意并开始监听后采集音频。服务商的数据保留规则取决于所用 API 和账户配置。
+音频和会话历史默认只在内存中。个人资料和设置保存在 `%LOCALAPPDATA%\AIJapaneseInterviewAssistant`，Key 按服务商分别存入 Windows 凭据管理器。确认开始监听后，应用才采集音频。生成回答时按问题发送相关资料，保存资料时不会发送请求。服务商的数据保留规则取决于所用 API 和账户配置。
 
 | 状态 | 范围 |
 | --- | --- |
@@ -70,7 +70,7 @@ ZIP 已包含运行库和 Whisper 模型。无需安装 Python、输入 PowerShe
 | 待验证 | 各服务商真实 API、实际会议采集、30 分钟联调、端到端延迟和无 Python 的干净 Windows 11 |
 | 后续 | 按应用独立采集 |
 
-Windows 11 x64 完整离线回归 168 项通过，覆盖真实设备枚举、界面、字幕、回答核验和 API 协议替身。补充中文资料核验后，44 项定向测试通过。现有 Whisper 模型通过中文配置的预览和定稿 PCM 推理检查。
+Windows 11 x64 完整离线回归 174 项通过，覆盖设备枚举、界面、字幕、资料保存、技术语境核验和 API 协议替身。现有 Whisper 模型通过中文配置的预览和定稿 PCM 推理检查。
 
 ## 源码运行与打包
 

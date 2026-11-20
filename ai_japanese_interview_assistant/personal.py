@@ -270,6 +270,8 @@ _SECTION_TITLES = {
     for title in titles
 }
 _SUBJECT_TERMS = (
+    ("power supply", "power electronics", "flyback", "电源", "電源", "反激", "フライバック"),
+    ("medical", "medicine", "cardiomyopathy", "医学", "医疗", "醫療", "医療", "心肌病"),
     ("radio", "wireless", "無線", "无线"),
     ("measurement", "measured", "測定", "计测", "測量", "测量", "計測", "測試"),
     ("signal", "signals", "信号", "訊號"),
@@ -291,6 +293,10 @@ _COMMON_HAN = {
     "介紹", "介绍", "自己", "何故", "請問", "请问", "貴方", "如何", "可以", "是否", "告訴", "告诉",
     "面接", "面试", "説明", "说明", "具体", "例子", "认为", "認為", "哪些", "做过", "做過",
 }
+_GENERIC_TOPIC_WORDS = {
+    "between", "compare", "compared", "difference", "differences", "different", "example", "interview",
+    "question", "questions", "project", "projects", "role", "technical", "vs",
+}
 _EXCERPT_BREAKS = re.compile(r"(?<=[。！？!?])\s*|(?<=\.)\s+")
 _CONTACT_DETAIL = re.compile(
     r"@\S+\.\S+|(?<!\d)\+?\d(?:[ ()\-.]*\d){9,}(?!\d)"
@@ -309,6 +315,21 @@ def _words(text):
 
 def _han_pairs(text):
     return {part[i:i + 2] for part in _HAN.findall(text) for i in range(len(part) - 1)}
+
+
+def _topic_words(text):
+    return {word for word in _words(text) - _COMMON_WORDS - _GENERIC_TOPIC_WORDS if len(word) >= 2}
+
+
+def _subjects_in(text, words):
+    return [terms for terms in _SUBJECT_TERMS if any(_matches(term, text, words) for term in terms)]
+
+
+def has_topic_cues(question):
+    """Identify names, abbreviations or subject vocabulary in the question."""
+    question = unicodedata.normalize("NFKC", question).casefold()
+    words = _topic_words(question)
+    return bool(words or _subjects_in(question, words))
 
 
 def _excerpt_candidates(source):
@@ -331,19 +352,26 @@ def _excerpt_candidates(source):
         lines_left = max(0, lines_left - 1)
 
 
-def select_excerpts(info: PersonalInfo, categories, question: str) -> tuple[str, ...]:
+def select_excerpts(info: PersonalInfo, categories, question: str, *, topic_only=False) -> tuple[str, ...]:
     """Select at most two relevant exact slices of the stored background or resume."""
     categories = set(categories)
     category_terms = {term for category in categories for term in _CATEGORY_TERMS.get(category, ())}
-    if not category_terms:
+    if not category_terms and not topic_only:
         return ()
     question = unicodedata.normalize("NFKC", question).casefold()
-    question_words = _words(question) - _COMMON_WORDS
-    question_han = _han_pairs(question) - _COMMON_HAN
-    subjects = [terms for terms in _SUBJECT_TERMS
-                if any(_matches(term, question, question_words) for term in terms)]
+    question_words = _topic_words(question) if topic_only else _words(question) - _COMMON_WORDS
+    question_han = set() if topic_only else _han_pairs(question) - _COMMON_HAN
+    subjects = _subjects_in(question, question_words)
+    if topic_only and not (question_words or subjects):
+        return ()
+    # An expressly named subject takes precedence over the saved interview role.
+    scope = subjects
+    if topic_only and not scope:
+        role = unicodedata.normalize("NFKC", f"{info.role}\n{info.scenario}").casefold()
+        scope = _subjects_in(role, _words(role))
 
     ranked = {}
+    scoped = {}
     for source in (info.background[:MAX_BACKGROUND], info.resume[:MAX_RESUME]):
         for excerpt, section in _excerpt_candidates(source):
             normalized = unicodedata.normalize("NFKC", excerpt).casefold()
@@ -354,4 +382,7 @@ def select_excerpts(info: PersonalInfo, categories, question: str) -> tuple[str,
             score = int(category_match) + 3 * subject_matches + 2 * overlap
             if score:
                 ranked[excerpt] = max(score, ranked.get(excerpt, 0))
-    return tuple(sorted(ranked, key=ranked.get, reverse=True)[:2])
+                if topic_only and any(any(_matches(term, normalized, words) for term in terms) for terms in scope):
+                    scoped[excerpt] = ranked[excerpt]
+    results = scoped or ranked
+    return tuple(sorted(results, key=results.get, reverse=True)[:2])

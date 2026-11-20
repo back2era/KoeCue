@@ -193,6 +193,15 @@ def test_excerpts_need_relevant_material_and_categories():
     assert select_excerpts(info, (), "大学について教えてください。") == ()
 
 
+def test_topic_excerpts_use_the_stated_role_until_question_names_another_subject():
+    power_project = "在反激电源中分析 DCM 和 CCM 的工作波形。"
+    medical_project = "医学影像项目中比较 DCM 和 CCM。"
+    info = PersonalInfo(role="电源工程师", resume=f"{medical_project}\n{power_project}")
+
+    assert select_excerpts(info, (), "dcm和ccm有什么区别？", topic_only=True) == (power_project,)
+    assert select_excerpts(info, (), "医学上的 DCM 和 CCM 有什么区别？", topic_only=True) == (medical_project,)
+
+
 def test_ordinary_question_words_do_not_make_unrelated_lines_relevant():
     info = PersonalInfo(background="I am a university graduate.")
     assert select_excerpts(info, ("project",), "Can you tell me about a project?") == ()

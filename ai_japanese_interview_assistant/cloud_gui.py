@@ -81,7 +81,7 @@ class Row:
 class CloudPane(QWidget):
     idle = Signal()
     theme_changed = Signal(str)
-    profile_changed = Signal(bool, object, int, str, str)
+    listening_state_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -97,7 +97,9 @@ class CloudPane(QWidget):
         self.vault_provider = None
         self.approved_facts = ()
         self.approved_personal = PersonalInfo()
-        self.profile_snapshot = None
+        self.saved_personal = PersonalInfo()
+        self.personal_busy = False
+        self.reported_state = "idle"
         self.generation = 0
         self.session_id = 0
         self.capture_available = True
@@ -165,6 +167,7 @@ class CloudPane(QWidget):
         self.vault_button.setMenu(vault_menu)
         self.auto_answer = QCheckBox("自动为面试发言生成建议")
         self.auto_answer.setChecked(True)
+        self.manage_facts = QPushButton("管理已核对事实")
         self.start = QPushButton("确认并开始云端监听")
         self.pause = QPushButton("暂停")
         self.stop = QPushButton("停止")
@@ -238,6 +241,7 @@ class CloudPane(QWidget):
         self.model_refresh.clicked.connect(lambda: self.run_api_action(refresh=True))
         self.api_test.clicked.connect(lambda: self.run_api_action(refresh=False))
         self.auto_answer.toggled.connect(self.select_row)
+        self.manage_facts.clicked.connect(self.open_profile)
         self.key.textChanged.connect(self.api_input_changed)
         self.start.clicked.connect(self.start_session)
         self.pause.clicked.connect(self.pause_session)
@@ -381,6 +385,10 @@ class CloudPane(QWidget):
             row.addWidget(plain_label(title, "sectionTitle"), 1)
             row.addWidget(selector)
             option_layout.addLayout(row)
+        answer_options = QHBoxLayout()
+        answer_options.addWidget(self.auto_answer, 1)
+        answer_options.addWidget(self.manage_facts)
+        option_layout.addLayout(answer_options)
         self.settings.body.addWidget(options)
         card = glass_panel()
         settings = QVBoxLayout(card)
@@ -614,27 +622,29 @@ class CloudPane(QWidget):
         for widget in (self.source, self.refresh, self.provider, self.model, self.workspace, self.key,
                        self.vault_button, self.auto_answer):
             widget.setEnabled(configurable)
-        profile_state = (
-            configurable, self.approved_personal, len(self.approved_facts), self.selected_provider().label, self.state,
-        )
-        if profile_state != self.profile_snapshot:
-            self.profile_snapshot = profile_state
-            self.profile_changed.emit(*profile_state)
+        self.manage_facts.setEnabled(configurable and self.state == "idle" and self.preferences_ready)
+        if self.state != self.reported_state:
+            self.reported_state = self.state
+            self.listening_state_changed.emit(self.state)
         endpoint_valid = self.endpoint_valid()
         self.workspace.setToolTip("" if endpoint_valid else "请输入有效的百炼北京工作空间 ID。")
         api_ready = bool(configurable and self.api_key() and endpoint_valid)
         self.api_test.setEnabled(api_ready)
         self.model_refresh.setEnabled(api_ready and bool(self.selected_provider().models_url))
         ready = bool(self.source.currentData() and self.api_key() and endpoint_valid)
-        can_start = idle and ready and self.capture_available and self.state in {"idle", "paused"}
+        can_start = (idle and ready and self.capture_available and not self.personal_busy
+                     and self.state in {"idle", "paused"})
         self.start.setEnabled(can_start)
         provider = self.selected_provider()
         mode = "云端监听" if provider is OPENAI else "本地转写"
         self.start.setText(("恢复" if self.state == "paused" else "确认并开始") + mode)
         data_route = ("所选音频会发送至 OpenAI 转写。"
                       if provider is OPENAI else "音频在本机转写。")
+        profile_notice = ("生成回答时会向该服务商发送相关面试资料。"
+                          if self.saved_personal or self.approved_facts else "")
         self.capture_notice.setText(
-            f"开始前请确认已取得必要同意。{data_route}{INTERVIEW_LANGUAGES[language]}文字和已授权资料可发送至 {provider.label}。"
+            f"开始前请确认已取得必要同意。{data_route}{INTERVIEW_LANGUAGES[language]}文字可发送至 {provider.label}。"
+            f"{profile_notice}"
         )
         self.capture_notice.setVisible(can_start and self.state == "idle")
         self.pause.setEnabled(self.state == "active")
@@ -684,6 +694,7 @@ class CloudPane(QWidget):
             return
         if self.state != "paused":
             self.session_id += 1
+            self.approved_personal = self.saved_personal
         self.generation += 1
         self.state = "active"
         self.persist_preferences()
@@ -858,10 +869,14 @@ class CloudPane(QWidget):
         self.controls()
 
     @Slot(object)
-    def set_approved_personal(self, info):
-        if self.state == "idle":
-            self.approved_personal = info
-            self.controls()
+    def set_saved_personal(self, info):
+        self.saved_personal = info
+        self.controls()
+
+    @Slot(bool)
+    def set_personal_busy(self, busy):
+        self.personal_busy = busy
+        self.controls()
 
     def revoke_profile(self):
         self.approved_personal = PersonalInfo()

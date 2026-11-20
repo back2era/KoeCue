@@ -154,6 +154,93 @@ def test_interview_context_reaches_only_the_answer_draft():
     assert json.loads(text.calls[2][1]) == {"ja": ["優先順位を確認します。", ""], "zh": ["我会确认优先级。", ""]}
 
 
+@pytest.mark.parametrize("language,question", [
+    ("zh", "dcm和ccm有什么区别？"),
+    ("ja", "ＤＣＭとＣＣＭの違いは何ですか？"),
+])
+def test_technical_answer_checks_saved_project_domain_on_draft_and_retry(language, question):
+    expected = "在开关电源里，DCM 有零电流区间，CCM 的电感电流连续。"
+    source = "使用 DCM 和 CCM 比较反激电源的工作波形。"
+    role = "开关电源工程师"
+    scenario = "电源研发技术面试"
+    info = PersonalInfo(
+        role=role, scenario=scenario, company="Company fixture marker",
+        resume=(f"项目经历\n{source}\n另一个项目涉及无线通信。\n"
+                "医学影像项目中比较 DCM 和 CCM。\n"
+                "DCM 项目联系人 test@example.invalid\n联系方式\nCCM 联系地址测试"),
+    )
+    rejected = {"before_zh": "请问您指的是医学领域的缩写吗？", "after_zh": "", "fact_ids": []}
+    corrected = {"before_zh": expected, "after_zh": "", "fact_ids": []}
+    if language == "ja":
+        rejected.update(before_ja="医療分野の略語ですか。", after_ja="")
+        corrected.update(
+            before_ja="スイッチング電源では、DCMに電流がゼロになる区間があり、CCMではインダクタ電流が連続します。",
+            after_ja="",
+        )
+    text = ScriptedText([
+        {"question": True, "personal": False, "categories": []},
+        rejected, {"safe": False}, corrected, {"safe": True},
+    ])
+
+    answer = asyncio.run(InterviewService(text, language=language).suggest(
+        question, automatic=True, personal_info=info,
+    ))
+
+    assert answer == Answer(corrected.get("before_ja", ""), expected)
+    assert text.calls[0] == ("question", question)
+    for call, value in text.calls[1:]:
+        payload = json.loads(value)
+        assert payload["question"] == question
+        assert payload["context"] == {"role": role, "scenario": scenario}
+        assert payload["technical_references"] == [source]
+        assert "无线通信" not in value and "@example.invalid" not in value and "联系地址" not in value
+        assert "Company fixture marker" not in value
+        assert "医学影像项目" not in value
+        if call == "rewrite":
+            assert rejected["before_zh"] not in value
+    assert "excerpt_ids" not in text.schemas["draft"]
+
+
+def test_technical_answer_keeps_saved_role_without_a_resume():
+    question = "DCM 和 CCM 有什么区别？"
+    role = "电源工程师"
+    draft = {"before_zh": "就电源而言，两个模式的区别在于电流是否连续。", "after_zh": "", "fact_ids": []}
+    text = ScriptedText([draft, {"safe": True}])
+
+    asyncio.run(InterviewService(text, language="zh").suggest(
+        question, automatic=True, personal_info=PersonalInfo(role=role),
+    ))
+
+    assert json.loads(text.calls[1][1])["context"] == {"role": role}
+
+
+def test_personal_technical_retry_keeps_role_and_scene_without_rejected_claims():
+    question = "你在反激项目中如何验证 DCM 和 CCM？"
+    source = "我在反激电源项目中测量了 DCM 与 CCM 的波形。"
+    company = "Company fixture marker"
+    context = {"role": "电源工程师", "scenario": "反激电源研发面试"}
+    info = PersonalInfo(company=company, resume=source, **context)
+    claim = "我设计了整台电源。"
+    rewrite = "一般可以观测磁化电流，在一个开关周期内判断是否有一段时间为零。"
+    text = ScriptedText([
+        {"question": True, "personal": True, "categories": ["project"]},
+        {"before_zh": "", "after_zh": "", "fact_ids": [],
+         "excerpt_ids": ["excerpt_1"], "excerpt_zh": [claim]},
+        {"safe": False},
+        {"before_zh": rewrite, "after_zh": "", "fact_ids": []},
+        {"safe": True},
+    ])
+
+    answer = asyncio.run(InterviewService(text, language="zh").suggest(
+        question, automatic=True, personal_info=info,
+    ))
+
+    assert answer == Answer("", rewrite)
+    assert json.loads(text.calls[2][1])["excerpts"] == [{"source": source, "zh": claim}]
+    assert json.loads(text.calls[3][1]) == {"question": question, "facts": [], "context": context}
+    assert json.loads(text.calls[4][1]) == {"question": question, "zh": [rewrite, ""], "context": context}
+
+
 def excerpt_info():
     return PersonalInfo(resume="I measured radio signals.\nPrivate fixture marker.")
 
