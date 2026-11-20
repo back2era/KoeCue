@@ -6,7 +6,7 @@ from contextlib import aclosing
 from dataclasses import dataclass, replace
 import json
 
-from .config import REALTIME_MODEL, REALTIME_URL
+from .config import DEFAULT_INTERVIEW_LANGUAGE, REALTIME_MODEL, REALTIME_URL
 
 
 LOCAL_PREVIEW_EVENT = "local.transcription.preview"
@@ -144,7 +144,8 @@ class AudioProcessor:
         return self._cutter.finish()
 
 
-async def run_transcription(key, frames, on_event, on_ready=lambda: None, *, connect=None, on_ending=lambda: None):
+async def run_transcription(key, frames, on_event, on_ready=lambda: None, *,
+                            connect=None, on_ending=lambda: None, language=DEFAULT_INTERVIEW_LANGUAGE):
     """Send frames and emit provider events until input ends or the task is cancelled."""
     if connect is None:
         from websockets.asyncio.client import connect
@@ -155,7 +156,9 @@ async def run_transcription(key, frames, on_event, on_ready=lambda: None, *, con
             "type": "transcription",
             "audio": {"input": {
                 "format": {"type": "audio/pcm", "rate": 24000},
-                "transcription": {"model": REALTIME_MODEL, "languages": ["ja"], "delay": "low"},
+                "transcription": {
+                    "model": REALTIME_MODEL, "languages": ["zh-cn" if language == "zh" else language], "delay": "low",
+                },
                 "turn_detection": None,
             }},
         },

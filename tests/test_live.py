@@ -8,6 +8,35 @@ from ai_japanese_interview_assistant.personal import PersonalInfo
 from ai_japanese_interview_assistant.profiles import Fact
 
 
+def test_chinese_transcript_automatically_suggests_without_translation(monkeypatch):
+    from ai_japanese_interview_assistant import live
+
+    async def exercise():
+        expected = Answer("", "我会先听取大家的意见。")
+
+        class Reply:
+            async def suggest(self, question, *, automatic, **kwargs):
+                assert automatic
+                assert question == "团队意见不一致时怎么办？"
+                return expected
+
+        worker = LiveWorker(1, None, "test", language="zh", auto_answer=True)
+        worker.interview = Reply()
+        suggestions = []
+        worker.answer.connect(lambda row_id, answer, status, scoped: suggestions.append(answer))
+        worker.on_event({
+            "type": "conversation.item.input_audio_transcription.completed",
+            "item_id": "question",
+            "transcript": "团队意见不一致时怎么办？",
+        })
+        assert set(worker.jobs) == {("answer", (0, 1, "question"))}
+        await asyncio.gather(*worker.jobs.values())
+        assert suggestions == [None, expected]
+
+    monkeypatch.setattr(live, "record", lambda *args: None)
+    asyncio.run(exercise())
+
+
 def test_revoking_personal_info_cancels_a_scoped_answer():
     async def exercise():
         entered = asyncio.Event()

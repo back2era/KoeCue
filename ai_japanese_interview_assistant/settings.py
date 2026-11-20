@@ -5,7 +5,7 @@ from PySide6.QtCore import QSettings
 
 from . import APP_NAME
 from .answer_format import ANSWER_LEVELS, DEFAULT_ANSWER_LEVEL
-from .config import PROVIDERS
+from .config import DEFAULT_INTERVIEW_LANGUAGE, INTERVIEW_LANGUAGES, PROVIDERS
 from .glass import DEFAULT_THEME, THEMES
 from .profiles import ProfileError, app_directory
 
@@ -20,6 +20,7 @@ class Preferences:
     answer_level: str = DEFAULT_ANSWER_LEVEL
     model_choices: tuple[tuple[str, str], ...] = ()
     qwen_workspace: str = ""
+    interview_language: str = DEFAULT_INTERVIEW_LANGUAGE
 
 
 def _store():
@@ -31,6 +32,7 @@ def load_preferences():
     provider = store.value("provider", "openai", type=str)
     theme = store.value("appearance/theme", DEFAULT_THEME, type=str)
     answer_level = store.value("answer/level", DEFAULT_ANSWER_LEVEL, type=str)
+    language = store.value("interview/language", DEFAULT_INTERVIEW_LANGUAGE, type=str)
     model_choices = tuple(
         (code, model) for code in PROVIDERS
         if (model := store.value(f"api/models/{code}", "", type=str).strip())
@@ -44,6 +46,7 @@ def load_preferences():
         answer_level=answer_level if answer_level in ANSWER_LEVELS else DEFAULT_ANSWER_LEVEL,
         model_choices=model_choices,
         qwen_workspace=store.value("api/qwen_workspace", "", type=str).strip(),
+        interview_language=language if language in INTERVIEW_LANGUAGES else DEFAULT_INTERVIEW_LANGUAGE,
     )
     if store.status() != QSettings.Status.NoError:
         raise ProfileError("无法读取上次的设置。")
@@ -62,6 +65,7 @@ def save_preferences(preferences):
     for code in PROVIDERS:
         store.setValue(f"api/models/{code}", models.get(code, ""))
     store.setValue("api/qwen_workspace", preferences.qwen_workspace)
+    store.setValue("interview/language", preferences.interview_language)
     store.sync()
     if store.status() != QSettings.Status.NoError:
         raise ProfileError(f"无法保存 {APP_NAME} 设置。")

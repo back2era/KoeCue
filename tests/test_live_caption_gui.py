@@ -24,7 +24,7 @@ def test_provisional_captions_can_correct_words_without_changing_history(monkeyp
         cloud.state = "active"
         cloud.session_id = 3
         cloud.generation = 2
-        cloud.rows[(3, 1, "earlier")] = cloud_gui.Row(ja="前の発言", finalized=True)
+        cloud.rows[(3, 1, "earlier")] = cloud_gui.Row(transcript="前の発言", finalized=True)
         cloud.dirty = True
         cloud.render_history()
 

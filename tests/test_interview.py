@@ -48,6 +48,45 @@ def test_question_yields_bilingual_answer_after_check():
     assert answer == Answer("まず、要件を確認します。\n次に、優先順位を決めます。", "首先确认需求。\n接着确定优先级。")
 
 
+def test_chinese_interview_uses_and_verifies_only_relevant_chinese_facts():
+    text = ScriptedText([
+        {"question": True, "personal": True, "categories": ["project"]},
+        {"before_zh": "", "after_zh": "", "fact_ids": ["verified"]},
+        {"safe": True},
+    ])
+    fact = Fact("verified", "project", "回路を作りました。", "我制作了电路。")
+    question = "请介绍你做过的项目。"
+
+    answer = asyncio.run(InterviewService(text, language="zh").suggest(question, automatic=True, facts=(fact,)))
+
+    assert answer == Answer("", "我制作了电路。")
+    assert json.loads(text.calls[1][1])["facts"] == [{"id": "verified", "zh": "我制作了电路。"}]
+    assert set(text.schemas["draft"]) == {"before_zh", "after_zh", "fact_ids"}
+    assert json.loads(text.calls[2][1]) == {"zh": ["", ""]}
+
+
+def test_chinese_interview_rewrites_an_unsupported_resume_claim():
+    text = ScriptedText([
+        {"question": True, "personal": True, "categories": ["project"]},
+        {"before_zh": "", "after_zh": "", "fact_ids": [],
+         "excerpt_ids": ["excerpt_1"], "excerpt_zh": ["我负责了整个项目。"]},
+        {"safe": False},
+        {"before_zh": "这个项目中，我负责【你的真实工作】。", "after_zh": "", "fact_ids": []},
+        {"safe": True},
+    ])
+    question = "请介绍你在无线电信号测量项目中的工作。"
+    info = PersonalInfo(resume="我测量了无线电信号。")
+    answer = asyncio.run(InterviewService(text, language="zh").suggest(
+        question, automatic=True, personal_info=info,
+    ))
+
+    assert answer == Answer("", "这个项目中，我负责【你的真实工作】。")
+    assert json.loads(text.calls[2][1])["excerpts"] == [
+        {"source": "我测量了无线电信号。", "zh": "我负责了整个项目。"},
+    ]
+    assert json.loads(text.calls[3][1]) == {"question": question, "facts": []}
+
+
 def test_unsupported_personal_claim_is_not_shown():
     unsafe = {"before_ja": "私は東京大学を卒業しました。", "before_zh": "我毕业于东京大学。",
               "after_ja": "", "after_zh": "", "fact_ids": []}

@@ -6,6 +6,8 @@ import re
 REALTIME_MODEL = "gpt-live-transcribe"
 TEXT_MODEL = "gpt-6-luna"
 REALTIME_URL = "wss://api.openai.com/v1/realtime?intent=transcription"
+DEFAULT_INTERVIEW_LANGUAGE = "ja"
+INTERVIEW_LANGUAGES = {"ja": "日语", "zh": "中文"}
 
 
 @dataclass(frozen=True)

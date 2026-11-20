@@ -49,7 +49,11 @@ def test_stereo_silence_stays_silent_after_real_resampling():
     assert processor.finish_turn() == []
 
 
-def test_websocket_appends_pcm_and_waits_for_final_after_commit():
+@pytest.mark.parametrize("language,hint,question", [
+    ("ja", "ja", "自己紹介をお願いします。"),
+    ("zh", "zh-cn", "请做一下自我介绍。"),
+])
+def test_websocket_appends_pcm_and_waits_for_final_after_commit(language, hint, question):
     class Socket:
         def __init__(self):
             self.sent = []
@@ -65,7 +69,7 @@ def test_websocket_appends_pcm_and_waits_for_final_after_commit():
             if event["type"] == "input_audio_buffer.commit":
                 self.incoming.put_nowait({
                     "type": "conversation.item.input_audio_transcription.completed",
-                    "item_id": "item_1", "transcript": "自己紹介をお願いします。",
+                    "item_id": "item_1", "transcript": question,
                 })
 
     socket = Socket()
@@ -79,11 +83,11 @@ def test_websocket_appends_pcm_and_waits_for_final_after_commit():
         yield None
 
     events = []
-    asyncio.run(run_transcription("test", frames(), events.append, connect=connect))
-    assert socket.sent[0]["session"]["audio"]["input"]["transcription"]["languages"] == ["ja"]
+    asyncio.run(run_transcription("test", frames(), events.append, connect=connect, language=language))
+    assert socket.sent[0]["session"]["audio"]["input"]["transcription"]["languages"] == [hint]
     assert socket.sent[1] == {"type": "input_audio_buffer.append", "audio": "AAE="}
     assert socket.sent[2] == {"type": "input_audio_buffer.commit"}
-    assert events[0]["transcript"] == "自己紹介をお願いします。"
+    assert events[0]["transcript"] == question
 
 
 def test_stop_releases_websocket_and_producer():

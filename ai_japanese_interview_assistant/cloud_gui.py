@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from .answer_display import compact_annotations, paragraph_breaks
 from .answer_format import ANSWER_LEVELS, DEFAULT_ANSWER_LEVEL
 from .diagnostic import DeviceScan
-from .config import OPENAI, PROVIDERS, QWEN
+from .config import DEFAULT_INTERVIEW_LANGUAGE, INTERVIEW_LANGUAGES, OPENAI, PROVIDERS, QWEN
 from .credentials import credential
 from .glass import DEFAULT_THEME, THEMES, GlassComboBox, GlassDialog, glass_panel, plain_label
 from .interview import Answer
@@ -68,13 +68,14 @@ class CaptionLabel(QLabel):
 
 @dataclass
 class Row:
-    ja: str = ""
+    transcript: str = ""
     zh: str = ""
     finalized: bool = False
     asr: str = ""
     translation: str = ""
     answer: Answer | None = None
     answer_status: str = ""
+    language: str = DEFAULT_INTERVIEW_LANGUAGE
 
 
 class CloudPane(QWidget):
@@ -120,6 +121,10 @@ class CloudPane(QWidget):
         for theme_id, theme in THEMES.items():
             self.theme.addItem(theme.label, theme_id)
         self.theme.setCurrentIndex(self.theme.findData(DEFAULT_THEME))
+        self.interview_language = GlassComboBox()
+        self.interview_language.setAccessibleName("面试语言")
+        self.interview_language.addItem("日语面试（带中文翻译）", "ja")
+        self.interview_language.addItem("中文面试", "zh")
         self.answer_level = GlassComboBox()
         self.answer_level.setAccessibleName("AI 回答难度")
         for level in ANSWER_LEVELS:
@@ -146,7 +151,7 @@ class CloudPane(QWidget):
         self.model_refresh = QPushButton("刷新模型")
         self.model_refresh.setToolTip("从服务商获取模型列表。也可以直接输入模型 ID。")
         self.api_test = QPushButton("测试连接")
-        self.api_test.setToolTip("向所选模型发送固定日语短句，检查流式译文。")
+        self.api_test.setToolTip("向所选模型发送固定样例，检查文本 API。")
         self.api_status = plain_label("", "muted")
         self.api_status.hide()
         self.key = QLineEdit()
@@ -176,7 +181,7 @@ class CloudPane(QWidget):
         self.history.setAlternatingRowColors(True)
         self.history.setShowGrid(False)
         self.history.verticalHeader().hide()
-        self.history.setHorizontalHeaderLabels(["日语原文", "简体中文", "状态"])
+        self.history.setHorizontalHeaderLabels(["面试原文", "简体中文译文", "状态"])
         self.history.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.history.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.history.setColumnWidth(2, 92)
@@ -225,6 +230,7 @@ class CloudPane(QWidget):
         self.refresh.clicked.connect(self.refresh_devices)
         self.source.currentIndexChanged.connect(self.source_changed)
         self.theme.currentIndexChanged.connect(lambda: self.theme_changed.emit(self.theme.currentData()))
+        self.interview_language.currentIndexChanged.connect(self.select_row)
         self.answer_level.currentIndexChanged.connect(self.update_answer_level)
         self.provider.currentIndexChanged.connect(self.provider_changed)
         self.model.currentTextChanged.connect(self.model_changed)
@@ -272,7 +278,8 @@ class CloudPane(QWidget):
         preview = QVBoxLayout(self.preview_card)
         preview.setContentsMargins(13, 8, 13, 9)
         preview.setSpacing(3)
-        preview.addWidget(plain_label("日语 · 识别中", "muted"))
+        self.preview_title = plain_label("日语 · 识别中", "muted")
+        preview.addWidget(self.preview_title)
         preview.addWidget(self.live_caption)
         self.preview_card.hide()
         layout.addWidget(self.preview_card)
@@ -290,17 +297,24 @@ class CloudPane(QWidget):
         page.setContentsMargins(0, 0, 4, 0)
         page.setSpacing(8)
 
-        for title, caption, status in (
-            ("日语原文", self.original, self.original_state),
-            ("简体中文", self.translated, self.translation_state),
-        ):
-            if caption is self.translated:
-                page.addWidget(self.rule())
-            heading = QHBoxLayout()
-            heading.addWidget(plain_label(title, "muted"), 1)
-            heading.addWidget(status)
-            page.addLayout(heading)
-            page.addWidget(caption)
+        self.original_title = plain_label("日语原文", "muted")
+        original_heading = QHBoxLayout()
+        original_heading.addWidget(self.original_title, 1)
+        original_heading.addWidget(self.original_state)
+        page.addLayout(original_heading)
+        page.addWidget(self.original)
+
+        self.translation_panel = QWidget()
+        translation = QVBoxLayout(self.translation_panel)
+        translation.setContentsMargins(0, 0, 0, 0)
+        translation.setSpacing(8)
+        translation.addWidget(self.rule())
+        translation_heading = QHBoxLayout()
+        translation_heading.addWidget(plain_label("简体中文", "muted"), 1)
+        translation_heading.addWidget(self.translation_state)
+        translation.addLayout(translation_heading)
+        translation.addWidget(self.translated)
+        page.addWidget(self.translation_panel)
 
         answer_card = glass_panel("answerCard")
         answer_layout = QVBoxLayout(answer_card)
@@ -360,7 +374,9 @@ class CloudPane(QWidget):
         options = glass_panel()
         option_layout = QVBoxLayout(options)
         option_layout.setContentsMargins(16, 12, 16, 12)
-        for title, selector in (("界面主题", self.theme), ("AI 回答难度", self.answer_level)):
+        for title, selector in (
+            ("界面主题", self.theme), ("面试语言", self.interview_language), ("AI 日语回答难度", self.answer_level),
+        ):
             row = QHBoxLayout()
             row.addWidget(plain_label(title, "sectionTitle"), 1)
             row.addWidget(selector)
@@ -495,6 +511,9 @@ class CloudPane(QWidget):
     def selected_provider(self):
         return PROVIDERS[self.provider.currentData()]
 
+    def selected_language(self):
+        return self.interview_language.currentData()
+
     def selected_model(self):
         return self.model.currentText().strip() or self.selected_provider().model
 
@@ -539,13 +558,14 @@ class CloudPane(QWidget):
             return
         provider, key = self.selected_provider(), self.api_key()
         model, workspace = self.selected_model(), self.workspace.text().strip()
+        language = self.selected_language()
 
         async def request():
             async with client_for(key, provider) as client:
                 service = TextService(client, provider, model=model, workspace=workspace)
                 if refresh:
                     return await service.list_models()
-                await service.check_connection()
+                await service.check_connection(language=language)
 
         def operation():
             try:
@@ -576,7 +596,7 @@ class CloudPane(QWidget):
         self.approved_facts = ()
         self.approved_personal = PersonalInfo()
         self.key.setPlaceholderText(f"{provider.label} API Key")
-        self.asr_status.setText("转写未连接" if provider is OPENAI else "本地日语转写未启动")
+        self.asr_status.setText("转写未连接" if provider is OPENAI else "本地转写未启动")
         self.text_status.setText(f"{provider.label} 文本 API 未连接")
         if self.preferences_ready and not self.closing:
             self.use_vault("read")
@@ -587,7 +607,10 @@ class CloudPane(QWidget):
                 and self.settings_worker is None and not self.closing)
         configurable = idle and self.state != "paused"
         self.theme.setEnabled(self.preferences_ready and not self.closing)
-        self.answer_level.setEnabled(self.preferences_ready and not self.closing)
+        language = self.selected_language()
+        self.answer_level.setEnabled(language == "ja" and self.preferences_ready and not self.closing)
+        self.interview_language.setEnabled(configurable and self.preferences_ready and self.state == "idle")
+        self.history.setColumnHidden(1, language == "zh")
         for widget in (self.source, self.refresh, self.provider, self.model, self.workspace, self.key,
                        self.vault_button, self.auto_answer):
             widget.setEnabled(configurable)
@@ -611,16 +634,17 @@ class CloudPane(QWidget):
         data_route = ("所选音频会发送至 OpenAI 转写。"
                       if provider is OPENAI else "音频在本机转写。")
         self.capture_notice.setText(
-            f"开始前请确认已取得必要同意。{data_route}日语文字和已授权资料可发送至 {provider.label}。"
+            f"开始前请确认已取得必要同意。{data_route}{INTERVIEW_LANGUAGES[language]}文字和已授权资料可发送至 {provider.label}。"
         )
         self.capture_notice.setVisible(can_start and self.state == "idle")
         self.pause.setEnabled(self.state == "active")
         self.stop.setEnabled(self.state in {"active", "paused"})
         key, row = self.current_row()
-        retryable = row and row.finalized and row.ja and row.translation not in {"翻译中", "已翻译"}
+        retryable = (row and row.language == "ja" and row.finalized and row.transcript
+                     and row.translation not in {"翻译中", "已翻译"})
         self.retry.setEnabled(bool(self.can_send_row(key) and retryable))
         self.suggest.setEnabled(bool(self.can_send_row(key) and row and row.finalized and
-                                     row.ja and row.answer_status != ANSWER_PENDING))
+                                     row.transcript and row.answer_status != ANSWER_PENDING))
         self.copy.setEnabled(bool(row and row.answer))
         self.latest.setEnabled(bool(self.rendered))
         self.refresh_status()
@@ -648,7 +672,11 @@ class CloudPane(QWidget):
             source = "上次音源不可用，请重新选择" if self.audio_selection[0] and self.scan is None else "请选择音源"
         else:
             source = "系统音频" if device.loopback else "麦克风"
-        self.input_summary.setText(f"{source} · 日语 → 中文")
+        language = self.selected_language()
+        language_name = INTERVIEW_LANGUAGES[language]
+        self.preview_title.setText(f"{language_name} · 识别中")
+        self.live_caption.setAccessibleName(f"正在识别的{language_name}")
+        self.input_summary.setText(f"{source} · {'日语 → 中文' if language == 'ja' else '中文面试'}")
         self.status_detail.setText("  ·  ".join((self.asr_status.text(), self.text_status.text(), audio)))
 
     def start_session(self):
@@ -667,7 +695,8 @@ class CloudPane(QWidget):
                                  session_id=self.session_id, auto_answer=self.auto_answer.isChecked(),
                                  facts=self.approved_facts, personal_info=self.approved_personal,
                                  provider=self.selected_provider(), answer_level=self.answer_level.currentData(),
-                                 model=self.selected_model(), workspace=self.workspace.text().strip())
+                                 model=self.selected_model(), workspace=self.workspace.text().strip(),
+                                 language=self.selected_language())
         self.worker.status.connect(self.set_status)
         self.worker.partial_transcript.connect(self.add_partial_transcript)
         self.worker.transcript.connect(self.add_transcript)
@@ -751,14 +780,17 @@ class CloudPane(QWidget):
     @Slot(object)
     def add_transcript(self, data):
         key, part = data
-        if self.state != "active" or key in self.rows or not (part.final or part.failed):
+        if (self.state != "active" or key[:2] != (self.session_id, self.generation)
+                or key in self.rows or not (part.final or part.failed)):
             return
         if key == self.preview_key:
             self.clear_live_caption()
+        language = self.selected_language()
         if part.failed:
-            self.rows[key] = Row(asr="转写失败")
+            self.rows[key] = Row(asr="转写失败", language=language)
         elif part.text:
-            self.rows[key] = Row(ja=part.text, finalized=True, asr="日语定稿")
+            self.rows[key] = Row(transcript=part.text, finalized=True, language=language,
+                                 asr=f"{INTERVIEW_LANGUAGES[language]}定稿")
         else:
             return
         self.mark_changed(key)
@@ -776,6 +808,8 @@ class CloudPane(QWidget):
         if self.state != "active" or key not in self.rows:
             return
         row = self.rows[key]
+        if row.language != "ja":
+            return
         row.zh, row.translation = text, state
         self.mark_changed(key)
 
@@ -799,18 +833,18 @@ class CloudPane(QWidget):
 
     def retry_translation(self):
         key, row = self.current_row()
-        if self.worker is not None and self.can_send_row(key) and row and row.finalized and row.ja:
-            self.worker.dispatch(self.worker.start_translation, key, row.ja)
+        if self.worker is not None and self.retry.isEnabled() and row and self.can_send_row(key):
+            self.worker.dispatch(self.worker.start_translation, key, row.transcript)
 
     def request_answer(self):
         key, row = self.current_row()
-        if self.worker is not None and self.can_send_row(key) and row and row.finalized and row.ja:
-            self.worker.dispatch(self.worker.start_answer, key, row.ja)
+        if self.worker is not None and self.can_send_row(key) and row and row.finalized and row.transcript:
+            self.worker.dispatch(self.worker.start_answer, key, row.transcript)
 
     def copy_answer(self):
         _, row = self.current_row()
         if row and row.answer:
-            QApplication.clipboard().setText(f"{row.answer.ja}\n\n{row.answer.zh}")
+            QApplication.clipboard().setText("\n\n".join(part for part in (row.answer.ja, row.answer.zh) if part))
 
     def open_profile(self):
         dialog = ProfileDialog(self.approved_facts, self.window())
@@ -895,6 +929,7 @@ class CloudPane(QWidget):
         self.auto_answer.setChecked(preferences.auto_answer)
         self.theme.setCurrentIndex(self.theme.findData(preferences.theme))
         self.answer_level.setCurrentIndex(self.answer_level.findData(preferences.answer_level))
+        self.interview_language.setCurrentIndex(self.interview_language.findData(preferences.interview_language))
         self.restore_audio_source()
 
     def persist_preferences(self):
@@ -905,6 +940,7 @@ class CloudPane(QWidget):
             self.answer_level.currentData(),
             tuple((code, self.model_choices[code]) for code in PROVIDERS if code in self.model_choices),
             self.workspace.text().strip(),
+            self.selected_language(),
         )
         changed = preferences != self.preferences
         key = self.key.text().strip() if self.key.isModified() else ""
@@ -967,7 +1003,7 @@ class CloudPane(QWidget):
             if key not in changed and index < len(previous) and previous[index] == key:
                 continue
             statuses = " · ".join(filter(None, (row.asr, row.translation, row.answer_status)))
-            for column, value in enumerate((row.ja, row.zh, statuses)):
+            for column, value in enumerate((row.transcript, row.zh, statuses)):
                 cell = self.history.item(index, column)
                 if cell is None:
                     cell = QTableWidgetItem(value)
@@ -993,8 +1029,14 @@ class CloudPane(QWidget):
         if changed:
             with QSignalBlocker(self.full_annotations):
                 self.full_annotations.setChecked(False)
+        language = row.language if row else self.selected_language()
+        language_name = INTERVIEW_LANGUAGES[language]
+        self.original_title.setText(f"{language_name}原文")
+        self.original.placeholder = f"等待{language_name}语音…"
+        self.translation_panel.setVisible(language == "ja")
+        self.retry.setVisible(language == "ja")
         animate = bool(self.can_send_row(key) and self.rendered and key == self.rendered[-1])
-        for widget, value in ((self.original, row.ja if row else ""), (self.translated, row.zh if row else "")):
+        for widget, value in ((self.original, row.transcript if row else ""), (self.translated, row.zh if row else "")):
             if changed:
                 widget.set_caption("", animate=False)
             widget.set_caption(value, animate=animate and widget is self.translated)
@@ -1008,7 +1050,8 @@ class CloudPane(QWidget):
     def render_answer(self):
         _, row = self.current_row()
         answer = row.answer if row else None
-        if answer:
+        language = row.language if row else self.selected_language()
+        if answer and language == "ja":
             compact = compact_annotations(answer.ja, answer.annotations, answer.highlights)
             expanded = self.full_annotations.isChecked()
             self.full_annotations.setVisible(len(compact) < len(answer.annotations))
@@ -1017,13 +1060,17 @@ class CloudPane(QWidget):
                 answer.ja, answer.annotations if expanded else compact,
                 highlights=answer.highlights, paragraph_breaks=paragraph_breaks(answer.ja),
             )
+        elif answer:
+            self.full_annotations.hide()
+            self.answer_ja.set_answer(answer.zh, paragraph_breaks=paragraph_breaks(answer.zh))
         else:
             self.full_annotations.hide()
-            placeholder = ("每段发言识别完成后会自动生成日语回应建议。" if self.auto_answer.isChecked()
-                           else "选中字幕后可生成日语参考回答。")
+            name = INTERVIEW_LANGUAGES[language]
+            placeholder = (f"每段发言识别完成后会自动生成{name}回应建议。" if self.auto_answer.isChecked()
+                           else f"选中字幕后可生成{name}参考回答。")
             self.answer_ja.set_answer(placeholder)
         self.answer_zh.setText(answer.zh if answer else "")
-        show_translation = bool(answer and answer.zh)
+        show_translation = bool(language == "ja" and answer and answer.zh)
         self.answer_translation_rule.setVisible(show_translation)
         self.answer_zh.setVisible(show_translation)
         answer_status = row.answer_status if row else ""

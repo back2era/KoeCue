@@ -8,7 +8,7 @@ from PySide6.QtCore import QThread, Signal
 
 from .answer_format import DEFAULT_ANSWER_LEVEL
 from .audio import AudioBuffer, AudioError, capture, check_topology
-from .config import OPENAI
+from .config import DEFAULT_INTERVIEW_LANGUAGE, OPENAI
 from .interview import InterviewService
 from .local_asr import LocalAsrError, load_decoder, run_local_transcription
 from .personal import PersonalInfo
@@ -32,7 +32,7 @@ class LiveWorker(QThread):
 
     def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False,
                  facts=(), personal_info=PersonalInfo(), provider=OPENAI, answer_level=DEFAULT_ANSWER_LEVEL,
-                 model="", workspace=""):
+                 model="", workspace="", language=DEFAULT_INTERVIEW_LANGUAGE):
         super().__init__(parent)
         self.generation = generation
         self.session_id = session_id
@@ -41,6 +41,7 @@ class LiveWorker(QThread):
         self.provider = provider
         self.model = model
         self.workspace = workspace
+        self.language = language
         self.auto_answer = auto_answer
         self.answer_level = answer_level
         self.facts = facts
@@ -116,7 +117,7 @@ class LiveWorker(QThread):
             return
         async with client_for(self.key, self.provider) as client:
             self.service = TextService(client, self.provider, model=self.model, workspace=self.workspace)
-            self.interview = InterviewService(self.service)
+            self.interview = InterviewService(self.service, language=self.language)
             started = monotonic()
             try:
                 if self.provider is OPENAI:
@@ -128,11 +129,11 @@ class LiveWorker(QThread):
 
                     await run_transcription(
                         self.key, self.audio_commands(), self.on_event, connected,
-                        on_ending=self.stop_text_and_audio,
+                        on_ending=self.stop_text_and_audio, language=self.language,
                     )
                 else:
-                    self.status.emit("asr", "正在加载本地日语模型…")
-                    decoder = await asyncio.to_thread(load_decoder)
+                    self.status.emit("asr", "正在加载本地语音模型…")
+                    decoder = await asyncio.to_thread(load_decoder, language=self.language)
                     if self.isInterruptionRequested():
                         return
                     self.status.emit("asr", "本地转写已就绪，正在接收语音")
@@ -207,11 +208,14 @@ class LiveWorker(QThread):
         if kind == "input_audio_buffer.committed" or part.final or part.failed:
             self.order.emit(tuple((self.session_id, self.generation, entry.item_id) for entry in self.book.parts))
         if kind.endswith("transcription.completed") and part.text:
-            self.start_translation(row_id, part.text)
+            if self.language == "ja":
+                self.start_translation(row_id, part.text)
             if self.auto_answer:
                 self.start_answer(row_id, part.text, True)
 
     def start_translation(self, row_id, text):
+        if self.language != "ja":
+            return
         job_id = ("translation", row_id)
         if len(self.jobs) >= MAX_ACTIVE_TEXT_JOBS:
             self.translation.emit(row_id, "", "队列繁忙，可以重试")
@@ -293,7 +297,8 @@ class LiveWorker(QThread):
         else:
             record(LogEvent.ANSWER_READY, monotonic() - started)
             self.answer.emit(row_id, answer, "建议已生成", scoped)
-            if not allowed():
+            self.status.emit("text", "文本 API 已连接")
+            if self.language != "ja" or not allowed():
                 return
             try:
                 annotated = await self.interview.annotate_answer(answer)

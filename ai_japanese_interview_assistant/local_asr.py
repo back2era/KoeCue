@@ -1,4 +1,4 @@
-"""Optional local Japanese speech recognition using the multilingual Whisper base model."""
+"""Optional local speech recognition using the multilingual Whisper base model."""
 import argparse
 import asyncio
 from collections import deque
@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 
 from .audio import AudioError
+from .config import DEFAULT_INTERVIEW_LANGUAGE
 from .profiles import app_directory
 from .transcription import LOCAL_PREVIEW_EVENT
 
@@ -40,7 +41,7 @@ def decoder_model_directory():
     return local
 
 
-def load_decoder():
+def load_decoder(*, language=DEFAULT_INTERVIEW_LANGUAGE):
     try:
         from faster_whisper import WhisperModel
     except (ImportError, OSError) as exc:
@@ -48,8 +49,8 @@ def load_decoder():
 
     directory = decoder_model_directory()
     if not _model_complete(directory):
-        message = ("找不到本地日语模型。请完整解压 KoeCue 发布包。"
-                   if getattr(sys, "frozen", False) else "尚未安装本地日语模型。请按 README 下载模型。")
+        message = ("找不到本地语音模型。请完整解压 KoeCue 发布包。"
+                   if getattr(sys, "frozen", False) else "尚未安装本地语音模型。请按 README 下载模型。")
         raise LocalAsrError(message)
 
     import numpy as np
@@ -59,15 +60,16 @@ def load_decoder():
         model = WhisperModel(str(directory), device="cpu", compute_type="int8",
                              cpu_threads=min(4, os.cpu_count() or 1), local_files_only=True)
     except (RuntimeError, ValueError, OSError) as exc:
-        raise LocalAsrError("无法加载本地日语模型。请按 README 检查安装。") from exc
+        raise LocalAsrError("无法加载本地语音模型。请按 README 检查安装。") from exc
 
     def decode(pcm, *, preview=False):
         samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
         samples = soxr.resample(samples, 24000, 16000)
         segments, _ = model.transcribe(
-            samples, language="ja", beam_size=1 if preview else 3, temperature=0.0,
+            samples, language=language, beam_size=1 if preview else 3, temperature=0.0,
             condition_on_previous_text=False, without_timestamps=True,
-            hotwords=None if preview else INTERVIEW_HOTWORDS,
+            initial_prompt="以下是普通话面试，请使用简体中文。" if language == "zh" else None,
+            hotwords=INTERVIEW_HOTWORDS if language == "ja" and not preview else None,
         )
         return "".join(segment.text for segment in segments).strip()
 
@@ -174,7 +176,7 @@ def main():
         load_decoder()
     except Exception as exc:
         parser.exit(1, f"本地模型安装失败（{type(exc).__name__}）。请检查依赖和下载网络。\n")
-    print("本地日语语音模型安装并加载成功。")
+    print("本地多语言语音模型安装并加载成功。")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import asyncio
 import sys
 from threading import Event
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,6 +9,30 @@ from ai_japanese_interview_assistant import local_asr
 from ai_japanese_interview_assistant.audio import AudioError
 from ai_japanese_interview_assistant.local_asr import run_local_transcription
 from ai_japanese_interview_assistant.transcription import TranscriptBook
+
+
+def test_chinese_decoder_reuses_the_same_model_without_japanese_hints(monkeypatch, tmp_path):
+    calls = []
+
+    class Model:
+        def __init__(self, directory, **options):
+            assert directory == str(tmp_path)
+
+        def transcribe(self, samples, **options):
+            assert len(samples) == 160
+            calls.append(options)
+            return [SimpleNamespace(text="请介绍你的项目。")], None
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=Model))
+    monkeypatch.setattr(local_asr, "decoder_model_directory", lambda: tmp_path)
+    for name in local_asr.MODEL_FILES:
+        (tmp_path / name).touch()
+
+    decode = local_asr.load_decoder(language="zh")
+    for preview in (True, False):
+        assert decode(bytes(480), preview=preview) == "请介绍你的项目。"
+    assert [options["language"] for options in calls] == ["zh", "zh"]
+    assert all(options["hotwords"] is None and "简体中文" in options["initial_prompt"] for options in calls)
 
 
 def test_frozen_app_uses_complete_bundled_model_and_keeps_local_fallback(monkeypatch, tmp_path):

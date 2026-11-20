@@ -5,7 +5,7 @@ import re
 
 import httpx
 
-from .config import ANTHROPIC, GEMINI, GLM, KIMI, MINIMAX, OPENAI, QWEN
+from .config import ANTHROPIC, DEFAULT_INTERVIEW_LANGUAGE, GEMINI, GLM, KIMI, MINIMAX, OPENAI, QWEN
 
 
 THINKING_TOKEN_ALLOWANCE = 1024
@@ -158,7 +158,15 @@ class TextService:
                         yield delta
         raise ServiceError("未收到完整译文。可以重试该段。")
 
-    async def check_connection(self):
+    async def check_connection(self, *, language=DEFAULT_INTERVIEW_LANGUAGE):
+        if language == "zh":
+            result = await self.structured(
+                "connection", "这是中文文本 API 连接测试。请将 ok 设为 true。",
+                "请确认连接。", {"ok": {"type": "boolean"}}, 40,
+            )
+            if result["ok"] is not True:
+                raise ServiceError("文本模型未确认连接。")
+            return
         async for _ in self.translate("おはようございます。"):
             pass
 

@@ -76,7 +76,7 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
 
         cloud.session_id = 2
         cloud.state = "active"
-        cloud.rows[(1, 1, "previous")] = Row(ja="前の質問", finalized=True)
+        cloud.rows[(1, 1, "previous")] = Row(transcript="前の質問", finalized=True)
         cloud.dirty = True
         cloud.render_history()
         assert not cloud.retry.isEnabled()
@@ -171,7 +171,7 @@ def test_glass_layout_keeps_history_visible_and_settings_in_sync():
         assert not cloud.settings.isVisible()
         for index in range(8):
             key = (0, index, str(index))
-            cloud.rows[key] = Row(ja=f"質問 {index}", finalized=True)
+            cloud.rows[key] = Row(transcript=f"質問 {index}", finalized=True)
             cloud.mark_changed(key)
         cloud.render_history()
         window.resize(790, 730)
@@ -227,7 +227,7 @@ def test_answer_defaults_to_focus_readings_and_expands_without_changing_copy(mon
         zh = "先确认需求和优先级，再进行测试。"
         answer = Answer(ja, zh, annotations, highlights)
         key = (1, 1, "sample")
-        cloud.rows[key] = Row(ja="どう進めますか。", finalized=True, answer=answer)
+        cloud.rows[key] = Row(transcript="どう進めますか。", finalized=True, answer=answer)
         cloud.mark_changed(key)
         cloud.render_history()
 
@@ -415,7 +415,9 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
                     finished.set()
 
         monkeypatch.setattr(live, "client_for", client_for)
-        monkeypatch.setattr(live, "load_decoder", lambda: lambda pcm, *, preview=False: "次に担当" if preview else statement)
+        monkeypatch.setattr(live, "load_decoder", lambda **kwargs: (
+            lambda pcm, *, preview=False: "次に担当" if preview else statement
+        ))
         monkeypatch.setattr(live, "run_transcription", no_openai)
         monkeypatch.setattr(live, "record", lambda *args: None)
         worker = live.LiveWorker(1, None, "test-deepseek", provider=DEEPSEEK, auto_answer=True, answer_level="N1")
@@ -517,9 +519,13 @@ def test_history_keeps_old_rows_and_scroll_position_when_a_new_segment_arrives(m
     try:
         wait_until(app, lambda: window.diagnostic.scan is None and cloud.provider.isEnabled())
         cloud.session_id = 1
+        cloud.generation = 1
         cloud.state = "active"
         keys = [(1, 1, str(index)) for index in range(500)]
-        cloud.rows.update({key: Row(ja=f"質問 {key[-1]}", zh=f"问题 {key[-1]}", finalized=True) for key in keys})
+        cloud.rows.update({
+            key: Row(transcript=f"質問 {key[-1]}", zh=f"问题 {key[-1]}", finalized=True)
+            for key in keys
+        })
         cloud.dirty = True
         cloud.render_history()
         app.processEvents()
@@ -609,6 +615,72 @@ def test_api_settings_restore_each_provider_model_without_saving_a_key(monkeypat
 
 
 @pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
+def test_chinese_mode_saves_and_keeps_japanese_history_readable(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant.__main__ import MainWindow
+    from ai_japanese_interview_assistant.cloud_gui import Row
+    from ai_japanese_interview_assistant.diagnostic import DeviceScan
+    from ai_japanese_interview_assistant.interview import Answer
+    from ai_japanese_interview_assistant.transcription import TranscriptPart
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(DeviceScan, "run", lambda self: self.result.emit([]))
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    cloud = window.cloud
+    try:
+        wait_until(app, lambda: cloud.interview_language.isEnabled())
+        assert cloud.selected_language() == "ja"
+        cloud.interview_language.setCurrentIndex(cloud.interview_language.findData("zh"))
+        cloud.settings.accept()
+        wait_until(app, lambda: cloud.settings_worker is None)
+        assert cloud.original_title.text() == "中文原文"
+        assert cloud.translation_panel.isHidden() and not cloud.answer_level.isEnabled()
+        assert "中文文字" in cloud.capture_notice.text()
+        assert cloud.history.isColumnHidden(1)
+
+        cloud.state = "active"
+        cloud.session_id = 2
+        cloud.generation = 1
+        old = (1, 1, "japanese")
+        cloud.rows[old] = Row(transcript="最初の質問", zh="第一个问题", finalized=True)
+        cloud.mark_changed(old)
+        cloud.render_history()
+
+        latest = (2, 1, "chinese")
+        cloud.add_partial_transcript((latest, TranscriptPart("chinese", "请介绍")))
+        assert cloud.live_caption.text() == "请介绍"
+        cloud.add_transcript((latest, TranscriptPart("chinese", "请介绍你的项目。", final=True)))
+        cloud.add_answer(latest, Answer("", "我负责了【你的真实工作】。"), "建议已生成", False)
+        cloud.render_history()
+        assert cloud.original_title.text() == "中文原文"
+        assert cloud.original.text() == "请介绍你的项目。"
+        assert cloud.answer_ja.text() == "我负责了【你的真实工作】。"
+        assert cloud.answer_zh.isHidden() and cloud.full_annotations.isHidden()
+        assert cloud.retry.isHidden() and not cloud.interview_language.isEnabled()
+        cloud.copy.click()
+        assert app.clipboard().text() == "我负责了【你的真实工作】。"
+
+        cloud.history.selectRow(0)
+        assert cloud.original_title.text() == "日语原文"
+        assert cloud.translated.text() == "第一个问题"
+        assert not cloud.translation_panel.isHidden()
+    finally:
+        window.close()
+        wait_until(app, lambda: not window.isVisible())
+
+    reopened = MainWindow()
+    reopened.show()
+    try:
+        wait_until(app, lambda: reopened.cloud.interview_language.isEnabled())
+        assert reopened.cloud.selected_language() == "zh"
+    finally:
+        reopened.close()
+        wait_until(app, lambda: not reopened.isVisible())
+
+
+@pytest.mark.skipif(os.environ.get("AIJA_TEST_GUI") != "1", reason="opt-in Qt smoke test")
 def test_api_actions_use_selected_model_without_starting_capture(monkeypatch):
     from PySide6.QtWidgets import QApplication
     from ai_japanese_interview_assistant import cloud_gui
@@ -621,7 +693,7 @@ def test_api_actions_use_selected_model_without_starting_capture(monkeypatch):
     app = QApplication.instance() or QApplication([])
     calls = []
 
-    async def check(service):
+    async def check(service, *, language):
         calls.append(service.model)
 
     async def list_models(service):
