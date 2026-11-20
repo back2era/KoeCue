@@ -109,6 +109,7 @@ class CloudPane(QWidget):
         self.session_id = 0
         self.capture_available = True
         self.state = "idle"
+        self.session_failure = None
         self.closing = False
         self.close_save_attempted = False
         self.rows = {}
@@ -188,7 +189,7 @@ class CloudPane(QWidget):
         self.auto_answer = QCheckBox("自动为面试发言生成建议")
         self.auto_answer.setChecked(True)
         self.manage_facts = QPushButton("管理已核对事实")
-        self.start = QPushButton("确认并开始云端监听")
+        self.start = QPushButton("确认并开始")
         self.pause = QPushButton("暂停")
         self.stop = QPushButton("停止")
         self.retry = QPushButton("重试所选翻译")
@@ -236,9 +237,9 @@ class CloudPane(QWidget):
         self.listening_badge.setWordWrap(False)
         self.input_summary = plain_label("", "muted")
         self.status_detail = plain_label("", "muted")
-        self.capture_notice = plain_label("", "captionState")
-        self.capture_notice.setAccessibleName("监听确认说明")
-        self.capture_notice.hide()
+        self.status_detail.hide()
+        self.settings_route = plain_label("", "muted")
+        self.settings_route.setAccessibleName("会话数据去向")
         self.settings_toggle = QPushButton("设置")
         self.settings_toggle.setCheckable(True)
         self.settings_toggle.setToolTip("设置音源、服务商、模型与 API Key")
@@ -378,17 +379,12 @@ class CloudPane(QWidget):
         self.splitter.setStretchFactor(1, 2)
 
         bar = glass_panel("glassBar")
-        bar_layout = QVBoxLayout(bar)
-        bar_layout.setContentsMargins(16, 11, 13, 11)
-        bar_layout.setSpacing(8)
-        bar_layout.addWidget(self.capture_notice)
-        footer = QHBoxLayout()
-        bar_layout.addLayout(footer)
-        info = QVBoxLayout()
-        info.setSpacing(3)
-        info.addWidget(self.input_summary)
-        info.addWidget(self.status_detail)
-        footer.addLayout(info, 1)
+        footer = QHBoxLayout(bar)
+        footer.setContentsMargins(16, 9, 13, 9)
+        footer.setSpacing(8)
+        footer.addWidget(self.input_summary)
+        footer.addWidget(self.status_detail)
+        footer.addStretch(1)
         for button in (self.settings_toggle, self.pause, self.stop, self.start):
             footer.addWidget(button)
         outer.addWidget(bar)
@@ -469,7 +465,10 @@ class CloudPane(QWidget):
         done = QPushButton("完成")
         done.setObjectName("primaryAction")
         done.clicked.connect(self.settings.accept)
-        self.settings.body.addWidget(done, 0, Qt.AlignmentFlag.AlignRight)
+        actions = QHBoxLayout()
+        actions.addWidget(self.settings_route, 1)
+        actions.addWidget(done)
+        self.settings.body.addLayout(actions)
         for button in self.settings.findChildren(QPushButton):
             button.setAutoDefault(False)
 
@@ -740,18 +739,8 @@ class CloudPane(QWidget):
         can_start = (idle and ready and self.capture_available and not self.personal_busy
                      and self.state in {"idle", "paused"})
         self.start.setEnabled(can_start)
-        self.start.setToolTip(asr_issue)
-        mode = "本地转写" if speech and speech.provider is None else "云端监听"
-        self.start.setText(("恢复" if self.state == "paused" else "确认并开始") + mode)
-        data_route = (f"所选音频会发送至 {speech.provider.label} 转写。"
-                      if speech and speech.provider else "音频在本机转写。")
-        profile_notice = (f"生成回答时会向 {provider.label} 发送相关面试资料。"
-                          if self.saved_personal or self.approved_facts else "")
-        self.capture_notice.setText(
-            f"开始前请确认已取得必要同意。{data_route}{INTERVIEW_LANGUAGES[language]}文字可发送至 {provider.label}。"
-            f"{profile_notice}" if speech else asr_issue
-        )
-        self.capture_notice.setVisible(can_start and self.state == "idle")
+        self.start.setText("恢复" if self.state == "paused" else "确认并开始")
+        self.update_start_notice(speech, provider, language, asr_issue)
         self.pause.setEnabled(self.state == "active")
         self.stop.setEnabled(self.state in {"active", "paused"})
         key, row = self.current_row()
@@ -763,6 +752,25 @@ class CloudPane(QWidget):
         self.copy.setEnabled(bool(row and row.answer))
         self.latest.setEnabled(bool(self.rendered))
         self.refresh_status()
+
+    def update_start_notice(self, speech, provider, language, asr_issue):
+        tip = [asr_issue] if asr_issue else []
+        if speech:
+            speech_target = speech.provider.label if speech.provider else "本机"
+            has_profile = bool(self.saved_personal or self.approved_facts)
+            scope = "文字和相关资料" if has_profile else "文字"
+            self.settings_route.setText(
+                f"音频 → {speech_target.split(' · ', 1)[0]} · {scope} → {provider.label.split(' · ', 1)[0]}"
+            )
+            audio = f"音频会发送至 {speech_target}。" if speech.provider else "音频在本机转写。"
+            tip.extend(("点此确认已取得必要同意。", audio,
+                        f"{INTERVIEW_LANGUAGES[language]}文字可发送至 {provider.label}。"))
+            if has_profile:
+                tip.append(f"生成回答时会向 {provider.label} 发送相关面试资料。")
+        self.settings_route.setVisible(speech is not None)
+        description = "\n".join(tip)
+        self.start.setToolTip(description)
+        self.start.setAccessibleDescription(description)
 
     def refresh_status(self):
         audio = self.audio_status.text()
@@ -784,15 +792,21 @@ class CloudPane(QWidget):
             self.listening_badge.style().polish(self.listening_badge)
         device = self.source.currentData()
         if device is None:
-            source = "上次音源不可用，请重新选择" if self.audio_selection[0] and self.scan is None else "请选择音源"
+            source = "上次音源不可用" if self.audio_selection[0] and self.scan is None else "请选择音源"
         else:
             source = "系统音频" if device.loopback else "麦克风"
         language = self.selected_language()
         language_name = INTERVIEW_LANGUAGES[language]
         self.preview_title.setText(f"{language_name} · 识别中")
         self.live_caption.setAccessibleName(f"正在识别的{language_name}")
-        self.input_summary.setText(f"{source} · {'日语 → 中文' if language == 'ja' else '中文面试'}")
-        self.status_detail.setText("  ·  ".join((self.asr_status.text(), self.text_status.text(), audio)))
+        self.input_summary.setText(f"{source} · {language_name}")
+        self.input_summary.setToolTip("\n".join((self.asr_status.text(), self.text_status.text(), audio)))
+        if self.session_failure:
+            service, message = self.session_failure
+            self.status_detail.setText({"asr": "转写异常", "text": "文本异常", "audio": "音源异常"}[service])
+            self.status_detail.setToolTip(message)
+            self.status_detail.setAccessibleDescription(message)
+        self.status_detail.setVisible(self.session_failure is not None)
 
     def start_session(self):
         if not self.start.isEnabled():
@@ -801,6 +815,7 @@ class CloudPane(QWidget):
             self.session_id += 1
             self.approved_personal = self.saved_personal
         self.generation += 1
+        self.session_failure = None
         self.state = "active"
         self.persist_preferences()
         self.settings_toggle.setChecked(False)
@@ -815,6 +830,7 @@ class CloudPane(QWidget):
                                  language=self.selected_language(), speech_model=self.speech_model.currentData(),
                                  speech_key=self.asr_key())
         self.worker.status.connect(self.set_status)
+        self.worker.failure.connect(self.set_session_failure)
         self.worker.partial_transcript.connect(self.add_partial_transcript)
         self.worker.transcript.connect(self.add_transcript)
         self.worker.order.connect(self.set_order)
@@ -832,7 +848,15 @@ class CloudPane(QWidget):
         if self.state == "active":
             statuses = {"asr": self.asr_status, "text": self.text_status, "audio": self.audio_status}
             statuses[service].setText(value)
+            if service == "text" and value == "文本 API 已连接" and self.session_failure:
+                if self.session_failure[0] == service:
+                    self.session_failure = None
             self.refresh_status()
+
+    def set_session_failure(self, service, message):
+        if self.state == "active":
+            self.session_failure = (service, message)
+            self.set_status(service, message)
 
     def pause_session(self):
         if self.worker is not None:
@@ -846,6 +870,7 @@ class CloudPane(QWidget):
 
     def stop_session(self):
         self.state = "idle"
+        self.session_failure = None
         self.clear_live_caption()
         if self.worker is not None:
             self.worker.stop()

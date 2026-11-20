@@ -72,10 +72,9 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
         assert cloud.api_key() == "test-deepseek"
         assert cloud.auto_answer.isChecked()
         assert cloud.speech_model.currentData() == "openai"
-        assert "音频会发送至 OpenAI" in cloud.capture_notice.text()
+        assert "音频会发送至 OpenAI" in cloud.start.toolTip()
         cloud.speech_model.setCurrentIndex(cloud.speech_model.findData("local"))
-        assert "DeepSeek" in cloud.capture_notice.text() and "音频在本机" in cloud.capture_notice.text()
-        assert "本地" in cloud.start.text()
+        assert "DeepSeek" in cloud.start.toolTip() and "音频在本机" in cloud.start.toolTip()
 
         cloud.session_id = 2
         cloud.state = "active"
@@ -126,23 +125,23 @@ def test_live_start_is_ready_after_saving_settings_and_requires_an_explicit_clic
         assert starts == []
         assert pane.worker is None
         assert pane.start.isEnabled()
-        assert pane.start.text() == "确认并开始本地转写"
-        assert pane.capture_notice.isVisible()
-        assert "音频在本机转写" in pane.capture_notice.text()
-        assert "DeepSeek" in pane.capture_notice.text()
+        assert pane.start.text() == "确认并开始"
+        assert not pane.status_detail.isVisible()
+        assert "音频在本机转写" in pane.start.toolTip()
+        assert "DeepSeek" in pane.start.toolTip()
 
         pane.start.click()
         wait_until(app, lambda: pane.settings_worker is None)
         assert starts == [(1, device)]
         assert pane.state == "active"
         pane.pause.click()
-        assert pane.start.text() == "恢复本地转写"
-        assert not pane.capture_notice.isVisible()
+        assert pane.start.text() == "恢复"
+        assert not pane.status_detail.isVisible()
         pane.start.click()
         assert starts == [(1, device), (1, device)]
         pane.stop.click()
-        assert pane.capture_notice.isVisible()
-        assert pane.start.text() == "确认并开始本地转写"
+        assert not pane.status_detail.isVisible()
+        assert pane.start.text() == "确认并开始"
     finally:
         window.close()
         wait_until(app, lambda: not window.isVisible())
@@ -642,7 +641,7 @@ def test_chinese_mode_saves_and_keeps_japanese_history_readable(monkeypatch):
         wait_until(app, lambda: cloud.settings_worker is None)
         assert cloud.original_title.text() == "中文原文"
         assert cloud.translation_panel.isHidden() and not cloud.answer_level.isEnabled()
-        assert "中文文字" in cloud.capture_notice.text()
+        assert "中文文字" in cloud.start.toolTip()
         assert cloud.history.isColumnHidden(1)
 
         cloud.state = "active"

@@ -55,8 +55,10 @@ def test_opens_with_two_saved_services_and_reuses_key_when_they_match(tmp_path, 
         QTest.keyClicks(pane.speech_key, "fixture-speech-key")
         pane.settings.accept()
         wait(app, pane.start.isEnabled)
-        assert "豆包语音" in pane.capture_notice.text()
-        assert "DeepSeek" in pane.capture_notice.text()
+        assert pane.input_summary.text() == "系统音频 · 中文"
+        assert not pane.status_detail.isVisible()
+        assert "豆包语音" in pane.start.toolTip()
+        assert "DeepSeek" in pane.start.toolTip()
         assert sessions == []
         pane.start.click()
         assert len(sessions) == 1
@@ -66,7 +68,12 @@ def test_opens_with_two_saved_services_and_reuses_key_when_they_match(tmp_path, 
         assert keys == {"DEEPSEEK_API_KEY": "fixture-text-key", "DOUBAO_ASR_API_KEY": "fixture-speech-key"}
         ini = tmp_path / "AIJapaneseInterviewAssistant" / "settings.ini"
         assert "fixture-" not in ini.read_text(encoding="utf-8")
+        sessions[0].failure.emit("asr", "连接超时，请检查网络。")
+        assert pane.status_detail.isVisible()
+        assert pane.status_detail.text() == "转写异常"
+        assert pane.status_detail.toolTip() == "连接超时，请检查网络。"
         pane.stop_session()
+        assert not pane.status_detail.isVisible()
         wait(app, lambda: pane.shutdown())
     finally:
         pane.close()

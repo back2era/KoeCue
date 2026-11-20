@@ -27,6 +27,7 @@ MAX_WAITING_ANSWERS = 32
 
 class LiveWorker(QThread):
     status = Signal(str, str)
+    failure = Signal(str, str)
     transcript = Signal(object)
     partial_transcript = Signal(object)
     order = Signal(object)
@@ -100,16 +101,16 @@ class LiveWorker(QThread):
             pass
         except AudioError as exc:
             record(LogEvent.AUDIO_ERROR)
-            self.status.emit("audio", str(exc))
+            self.failure.emit("audio", str(exc))
             self.status.emit("asr", "转写已停止")
         except RealtimeError as exc:
             record(LogEvent.API_ERROR)
-            self.status.emit("asr", str(exc))
+            self.failure.emit("asr", str(exc))
         except LocalAsrError as exc:
-            self.status.emit("asr", str(exc))
+            self.failure.emit("asr", str(exc))
         except Exception as exc:
             record(LogEvent.API_ERROR)
-            self.status.emit("asr", error_message(exc))
+            self.failure.emit("asr", error_message(exc))
         finally:
             self.buffer.close()
             self.key = self.speech_key = ""
@@ -284,7 +285,7 @@ class LiveWorker(QThread):
         except Exception as exc:
             record(LogEvent.API_ERROR)
             self.translation.emit(row_id, result, "翻译失败")
-            self.status.emit("text", error_message(exc))
+            self.failure.emit("text", error_message(exc))
         else:
             record(LogEvent.TRANSLATION_READY, monotonic() - started)
             self.translation.emit(row_id, result, "已翻译")

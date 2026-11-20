@@ -74,7 +74,7 @@ def test_saving_personal_info_supplies_the_next_session_without_extra_controls(m
         pane.role.setText("未保存的岗位")
         window.tabs.setCurrentWidget(cloud)
         wait(app, cloud.start.isEnabled)
-        assert "相关面试资料" in cloud.capture_notice.text()
+        assert "相关面试资料" in cloud.start.toolTip()
         cloud.start.click()
         assert sessions == [saved]
         assert cloud.approved_personal == saved
