@@ -1,6 +1,6 @@
 # KoeCue
 
-**实时面试字幕与口述建议。** 支持日语面试的日中翻译与双语建议，以及中文面试的普通话转写和简体中文建议。适合模拟面试及已获必要同意的线上面试。
+**实时面试字幕与口述建议。** 支持中文、日语和英语预设，可分别选择识别语言、字幕译文和 AI 回答的语言。适合模拟面试及已获必要同意的线上面试。
 
 **Windows 11 x64** · **可选语音识别模型** · **[MIT License](LICENSE)**
 
@@ -16,13 +16,13 @@
 2. 在 Windows 文件资源管理器中右键 ZIP，选择「全部解压缩」。
 3. 打开解压后的 `KoeCue` 文件夹，双击 **`KoeCue.exe`**。
 
-GitHub 已发布的 0.0.1 ZIP 对应早期日语版，内含 Whisper。中文面试和独立的语音识别模型选择可通过当前源码运行。当前源码的新构建只带运行库，解压后请保留同目录的 `_internal` 文件夹。
+GitHub 已发布的 0.0.1 ZIP 对应早期日语版，内含 Whisper。中、日、英三语面试和独立的语音识别模型选择可通过当前源码运行。当前源码的新构建只带运行库，解压后请保留同目录的 `_internal` 文件夹。
 
 ## 首次使用
 
-1. **设置语言和模型。** 打开「实时面试 → 设置」，选择面试语言、语音识别模型和 AI 回答模型。只有选了不同的云端服务商，才会分别填写两家的 Key。点「测试文本 API」可以检查回答和翻译的连接，语音识别在开始监听时连接。
+1. **设置语言和模型。** 打开「实时面试 → 设置」，选择日语、中文或英语面试预设，也可分别设置识别语言、翻译语言和回答语言。再选择语音识别模型和 AI 回答模型。只有选了不同的云端服务商，才会分别填写两家的 Key。点「测试文本 API」可以检查回答和翻译的连接，语音识别在开始监听时连接。
 2. **选择音源。** 要听会议声音，选择 Teams、Zoom 或浏览器正在使用的**系统播放设备**。用自己的声音练习时，选择麦克风。可先去「音频诊断」确认电平有变化。
-3. **开始监听。** 确认已取得必要同意，点「完成」保存设置，再在主界面点开始。日语模式显示日语原文，断句后显示中译和双语建议。中文模式显示中文原文，断句后直接生成中文建议。选择分段转写时，停顿后才显示原文。切换语言或模型前请先停止监听。
+3. **开始监听。** 确认已取得必要同意，点「完成」保存设置，再在主界面点开始。日语和英语预设默认显示中文字幕，中文预设直接生成中文建议。翻译语言与回答语言不同时，回答也会附上所选语言的译文。选择分段转写时，停顿后才显示原文。切换语言或模型前请先停止监听，已有会话记录按当时的语言组合显示。
 4. **回看或复制。** 点击右侧历史中的某一段，可回看字幕和对应建议。点「回到最新」继续跟随实时内容，点「复制回答」可复制该段的推荐回答。使用完毕后点「停止」。
 
 <details>
@@ -40,11 +40,11 @@ GitHub 已发布的 0.0.1 ZIP 对应早期日语版，内含 Whisper。中文面
 
 | 可选模型 | 出字方式与语种 | Key 环境变量 |
 | --- | --- | --- |
-| [豆包 2.0](https://docs.volcengine.com/docs/doubao-voice/large-model-streaming-automatic-speech-recognition-api-1?lang=zh) | 中文双向实时，使用新版豆包语音控制台小时版 | `DOUBAO_ASR_API_KEY` |
-| [Qwen-Audio 3.1 / 3.0 Streaming](https://help.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide) | 中文、日语双向实时，使用百炼北京地域 Key | `DASHSCOPE_API_KEY` |
-| [OpenAI GPT-Live-Transcribe](https://developers.openai.com/api/docs/guides/realtime-transcription) | 中文、日语实时 | `OPENAI_API_KEY` |
-| [DeepSeek 语音识别](https://api-docs.deepseek.com/zh-cn/guides/asr/) | 中文、日语，停顿后提交一段 | `DEEPSEEK_API_KEY` |
-| 本地 Whisper | 中文、日语。源码可选，需自行安装 | 无 |
+| [豆包 2.0](https://docs.volcengine.com/docs/doubao-voice/large-model-streaming-automatic-speech-recognition-api-1?lang=zh) | 中文、英语双向实时，使用新版豆包语音控制台小时版 | `DOUBAO_ASR_API_KEY` |
+| [Qwen-Audio 3.1 / 3.0 Streaming](https://help.aliyun.com/zh/model-studio/real-time-speech-recognition-user-guide) | 中文、日语、英语双向实时，使用百炼北京地域 Key | `DASHSCOPE_API_KEY` |
+| [OpenAI GPT-Live-Transcribe](https://developers.openai.com/api/docs/guides/realtime-transcription) | 中文、日语、英语实时 | `OPENAI_API_KEY` |
+| [DeepSeek 语音识别](https://api-docs.deepseek.com/zh-cn/guides/asr/) | 中文、日语、英语，停顿后提交一段 | `DEEPSEEK_API_KEY` |
+| 本地 Whisper | 中文、日语、英语。源码可选，需自行安装 | 无 |
 
 例如，用豆包转写、DeepSeek 回答，只需新增豆包语音 Key。用同一个服务商转写和回答时，两项共用该服务商的 Key。云端转写会发送所选音源的音频，并按服务商规则计费。
 
@@ -63,7 +63,7 @@ GitHub 已发布的 0.0.1 ZIP 对应早期日语版，内含 Whisper。中文面
 | [MiniMax](https://platform.minimax.cn/docs/api-reference/text-openai-api) | `MiniMax-M3.1-Flash` | `MINIMAX_API_KEY` |
 | [Google Gemini](https://aistudio.google.com/docs/openai) | `gemini-3.8-flash` | `GEMINI_API_KEY` |
 
-日语模式的翻译及两种模式的 AI 回答都需要网络，具体模型取决于 API 账户权限和服务地区。
+字幕翻译和 AI 回答都需要网络，具体模型取决于 API 账户权限和服务地区。若翻译语言和识别语言相同，会跳过字幕翻译。
 
 ## 常见问题
 
@@ -78,11 +78,11 @@ GitHub 已发布的 0.0.1 ZIP 对应早期日语版，内含 Whisper。中文面
 
 | 状态 | 范围 |
 | --- | --- |
-| 已完成 | Windows 便携构建、独立语音识别模型选择、日语和普通话字幕、日中翻译、历史与回答建议、五套主题和八家文本 API 适配 |
+| 已完成 | Windows 便携构建、独立语音识别模型选择、中日英字幕与回答语言组合、历史记录、五套主题和八家文本 API 适配 |
 | 待验证 | 各服务商真实 API、实际会议采集、30 分钟联调、端到端延迟和无 Python 的干净 Windows 11 |
-| 后续 | 按应用独立采集 |
+| 后续 | 按应用独立采集、根据对话自动切换识别和回答语言 |
 
-Windows 11 x64 离线回归 182 项通过，覆盖设备枚举、界面、字幕、资料保存、技术语境核验、双服务商密钥和语音 API 协议。便携构建通过窗口启动和音源枚举检查，ZIP 中无 Whisper 运行库或模型。云端识别效果与延迟待用有权限的账户实测。
+Windows 11 x64 离线回归 192 项通过，覆盖设备枚举、界面、中日英语言组合、旧版设置迁移、资料核验、双服务商密钥和语音 API 协议。便携构建通过窗口启动和音源枚举检查，ZIP 中无 Whisper 运行库或模型。云端识别效果与延迟待用有权限的账户实测。
 
 ## 源码运行与打包
 

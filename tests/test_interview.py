@@ -87,6 +87,30 @@ def test_chinese_interview_rewrites_an_unsupported_resume_claim():
     assert json.loads(text.calls[3][1]) == {"question": question, "facts": []}
 
 
+def test_english_answer_verifies_a_translated_fact_and_preserves_the_approved_japanese():
+    fact = Fact("verified", "project", "回路を試作しました。", "我试制了电路。")
+    text = ScriptedText([
+        {"question": True, "personal": True, "categories": ["project"]},
+        {"before_en": "", "after_en": "", "before_ja": "", "after_ja": "", "fact_ids": [],
+         "excerpt_ids": ["excerpt_1"], "excerpt_en": ["I prototyped a circuit."],
+         "excerpt_ja": ["回路を設計しました。"]},
+        {"safe": True},
+    ])
+
+    answer = asyncio.run(InterviewService(text, language="zh", answer_language="en",
+                                          translation_language="ja").suggest(
+        "请介绍你做过的项目。", automatic=True, facts=(fact,),
+    ))
+
+    assert answer == Answer(ja=fact.ja, zh="", en="I prototyped a circuit.")
+    assert "中文面试片段" in text.prompts["question"]
+    assert "英语" in text.prompts["draft"] and "日语" in text.prompts["draft"]
+    assert "before_zh" not in text.schemas["draft"]
+    assert json.loads(text.calls[2][1])["excerpts"] == [
+        {"source": fact.zh, "en": "I prototyped a circuit.", "ja": fact.ja},
+    ]
+
+
 def test_unsupported_personal_claim_is_not_shown():
     unsafe = {"before_ja": "私は東京大学を卒業しました。", "before_zh": "我毕业于东京大学。",
               "after_ja": "", "after_zh": "", "fact_ids": []}

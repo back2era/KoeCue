@@ -31,12 +31,12 @@ class SpeechModel:
     provider: Provider | None
     model: str = ""
     continuous: bool = False
-    languages: tuple[str, ...] = ("zh", "ja")
+    languages: tuple[str, ...] = ("zh", "ja", "en")
 
 
 SPEECH_MODELS = {
     "openai": SpeechModel("OpenAI · GPT-Live-Transcribe", OPENAI, REALTIME_MODEL),
-    "doubao": SpeechModel("豆包 2.0 · 中文实时", DOUBAO, DOUBAO.model, True, ("zh",)),
+    "doubao": SpeechModel("豆包 2.0 · 中英实时", DOUBAO, DOUBAO.model, True, ("zh", "en")),
     "qwen-3.1": SpeechModel("千问 Qwen-Audio 3.1 · 实时", QWEN, "qwen-audio-3.1-asr-flash-streaming", True),
     "qwen-3.0": SpeechModel("千问 Qwen-Audio 3.0 · 实时", QWEN, "qwen-audio-3.0-asr-flash-streaming", True),
     "deepseek": SpeechModel("DeepSeek · 停顿后转写", DEEPSEEK),

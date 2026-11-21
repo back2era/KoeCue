@@ -27,6 +27,25 @@ def test_translation_streams_deltas_without_storing_response():
     assert asyncio.run(exercise()) == ["你", "好"]
 
 
+def test_translation_sends_the_selected_source_and_target():
+    async def exercise():
+        def handle(request):
+            payload = json.loads(request.content)
+            assert "英语口语忠实翻成日语" in payload["instructions"]
+            assert payload["input"] == "Good morning."
+            return httpx.Response(200, text=(
+                'data: {"type":"response.output_text.delta","delta":"おはようございます。"}\n\n'
+                'data: {"type":"response.completed"}\n\n'
+            ))
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            service = TextService(client)
+            return [delta async for delta in service.translate("Good morning.", source_language="en",
+                                                              target_language="ja")]
+
+    assert asyncio.run(exercise()) == ["おはようございます。"]
+
+
 def test_truncated_stream_does_not_become_a_successful_translation():
     async def exercise():
         transport = httpx.MockTransport(lambda request: httpx.Response(200, text=(

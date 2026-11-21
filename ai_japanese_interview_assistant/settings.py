@@ -5,7 +5,10 @@ from PySide6.QtCore import QSettings
 
 from . import APP_NAME
 from .answer_format import ANSWER_LEVELS, DEFAULT_ANSWER_LEVEL
-from .config import DEFAULT_INTERVIEW_LANGUAGE, INTERVIEW_LANGUAGES, PROVIDERS
+from .config import (
+    DEFAULT_INTERVIEW_LANGUAGE, DEFAULT_TRANSLATION_LANGUAGES, INTERVIEW_LANGUAGES, PROVIDERS,
+    TRANSLATION_LANGUAGES,
+)
 from .glass import DEFAULT_THEME, THEMES
 from .profiles import ProfileError, app_directory
 from .speech import SPEECH_MODELS
@@ -23,6 +26,8 @@ class Preferences:
     qwen_workspace: str = ""
     interview_language: str = DEFAULT_INTERVIEW_LANGUAGE
     speech_model: str = ""
+    translation_language: str | None = None
+    answer_language: str | None = None
 
 
 def _store():
@@ -35,6 +40,11 @@ def load_preferences():
     theme = store.value("appearance/theme", DEFAULT_THEME, type=str)
     answer_level = store.value("answer/level", DEFAULT_ANSWER_LEVEL, type=str)
     language = store.value("interview/language", DEFAULT_INTERVIEW_LANGUAGE, type=str)
+    if language not in INTERVIEW_LANGUAGES:
+        language = DEFAULT_INTERVIEW_LANGUAGE
+    default_translation = DEFAULT_TRANSLATION_LANGUAGES[language]
+    translation = store.value("interview/translation_language", default_translation, type=str)
+    answer = store.value("interview/answer_language", language, type=str)
     speech_model = store.value("asr/model", "", type=str)
     model_choices = tuple(
         (code, model) for code in PROVIDERS
@@ -49,8 +59,10 @@ def load_preferences():
         answer_level=answer_level if answer_level in ANSWER_LEVELS else DEFAULT_ANSWER_LEVEL,
         model_choices=model_choices,
         qwen_workspace=store.value("api/qwen_workspace", "", type=str).strip(),
-        interview_language=language if language in INTERVIEW_LANGUAGES else DEFAULT_INTERVIEW_LANGUAGE,
+        interview_language=language,
         speech_model=speech_model if speech_model in SPEECH_MODELS else "",
+        translation_language=translation if translation in TRANSLATION_LANGUAGES or translation == "" else default_translation,
+        answer_language=answer if answer in INTERVIEW_LANGUAGES else language,
     )
     if store.status() != QSettings.Status.NoError:
         raise ProfileError("无法读取上次的设置。")
@@ -71,6 +83,11 @@ def save_preferences(preferences):
     store.setValue("api/qwen_workspace", preferences.qwen_workspace)
     store.setValue("interview/language", preferences.interview_language)
     store.setValue("asr/model", preferences.speech_model)
+    translation = preferences.translation_language
+    if translation is None:
+        translation = DEFAULT_TRANSLATION_LANGUAGES[preferences.interview_language]
+    store.setValue("interview/translation_language", translation)
+    store.setValue("interview/answer_language", preferences.answer_language or preferences.interview_language)
     store.sync()
     if store.status() != QSettings.Status.NoError:
         raise ProfileError(f"无法保存 {APP_NAME} 设置。")

@@ -52,6 +52,7 @@ def test_stereo_silence_stays_silent_after_real_resampling():
 @pytest.mark.parametrize("language,hint,question", [
     ("ja", "ja", "自己紹介をお願いします。"),
     ("zh", "zh-cn", "请做一下自我介绍。"),
+    ("en", "en", "Tell me about yourself."),
 ])
 def test_websocket_appends_pcm_and_waits_for_final_after_commit(language, hint, question):
     class Socket:

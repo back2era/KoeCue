@@ -10,7 +10,7 @@ from PySide6.QtCore import QThread, Signal
 
 from .answer_format import DEFAULT_ANSWER_LEVEL
 from .audio import AudioBuffer, AudioError, capture, check_topology
-from .config import DEFAULT_INTERVIEW_LANGUAGE, DEEPSEEK, OPENAI, QWEN
+from .config import DEFAULT_INTERVIEW_LANGUAGE, DEFAULT_TRANSLATION_LANGUAGES, DEEPSEEK, OPENAI, QWEN
 from .interview import InterviewService
 from .local_asr import LocalAsrError, load_decoder, run_local_transcription
 from .personal import PersonalInfo
@@ -37,7 +37,7 @@ class LiveWorker(QThread):
     def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False,
                  facts=(), personal_info=PersonalInfo(), provider=OPENAI, answer_level=DEFAULT_ANSWER_LEVEL,
                  model="", workspace="", language=DEFAULT_INTERVIEW_LANGUAGE,
-                 speech_model="openai", speech_key=None):
+                 speech_model="openai", speech_key=None, translation_language=None, answer_language=None):
         super().__init__(parent)
         self.generation = generation
         self.session_id = session_id
@@ -49,6 +49,10 @@ class LiveWorker(QThread):
         self.model = model
         self.workspace = workspace
         self.language = language
+        self.translation_language = (DEFAULT_TRANSLATION_LANGUAGES[language]
+                                     if translation_language is None else translation_language)
+        self.answer_language = language if answer_language is None else answer_language
+        self.subtitle_language = self.translation_language if self.translation_language != language else ""
         self.auto_answer = auto_answer
         self.answer_level = answer_level
         self.facts = facts
@@ -124,7 +128,9 @@ class LiveWorker(QThread):
             return
         async with client_for(self.key, self.provider) as client:
             self.service = TextService(client, self.provider, model=self.model, workspace=self.workspace)
-            self.interview = InterviewService(self.service, language=self.language)
+            self.interview = InterviewService(self.service, language=self.language,
+                                              answer_language=self.answer_language,
+                                              translation_language=self.translation_language)
             started = monotonic()
             try:
                 await self.transcribe(started)
@@ -240,13 +246,13 @@ class LiveWorker(QThread):
         if kind == "input_audio_buffer.committed" or part.final or part.failed:
             self.order.emit(tuple((self.session_id, self.generation, entry.item_id) for entry in self.book.parts))
         if kind.endswith("transcription.completed") and part.text:
-            if self.language == "ja":
+            if self.subtitle_language:
                 self.start_translation(row_id, part.text)
             if self.auto_answer:
                 self.start_answer(row_id, part.text, True)
 
     def start_translation(self, row_id, text):
-        if self.language != "ja":
+        if not self.subtitle_language:
             return
         job_id = ("translation", row_id)
         if len(self.jobs) >= MAX_ACTIVE_TEXT_JOBS:
@@ -276,7 +282,9 @@ class LiveWorker(QThread):
         try:
             if self.isInterruptionRequested():
                 raise asyncio.CancelledError
-            async for delta in self.service.translate(text):
+            async for delta in self.service.translate(
+                text, source_language=self.language, target_language=self.subtitle_language,
+            ):
                 result += delta
                 self.translation.emit(row_id, result, "翻译中")
         except asyncio.CancelledError:
@@ -330,7 +338,7 @@ class LiveWorker(QThread):
             record(LogEvent.ANSWER_READY, monotonic() - started)
             self.answer.emit(row_id, answer, "建议已生成", scoped)
             self.status.emit("text", "文本 API 已连接")
-            if self.language != "ja" or not allowed():
+            if self.answer_language != "ja" or not allowed():
                 return
             try:
                 annotated = await self.interview.annotate_answer(answer)

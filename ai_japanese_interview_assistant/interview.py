@@ -8,9 +8,12 @@ from .answer_format import (
     Highlight, RubyAnnotation, has_annotation_candidates, has_highlight_candidates, resolve_annotations,
     resolve_highlights,
 )
-from .config import DEFAULT_INTERVIEW_LANGUAGE, INTERVIEW_LANGUAGES
+from .config import (
+    DEFAULT_INTERVIEW_LANGUAGE, DEFAULT_TRANSLATION_LANGUAGES, INTERVIEW_LANGUAGES,
+    TRANSLATION_LANGUAGES,
+)
 from .personal import PersonalInfo, has_topic_cues, select_excerpts
-from .profiles import CATEGORIES, select_facts
+from .profiles import CATEGORIES, Fact, select_facts
 from .services import ServiceError
 
 _STRING = {"type": "string"}
@@ -75,18 +78,24 @@ _ANNOTATION_PROMPT = (
 
 @dataclass(frozen=True)
 class Answer:
-    ja: str
-    zh: str
+    ja: str = ""
+    zh: str = ""
     annotations: tuple[RubyAnnotation, ...] = ()
     highlights: tuple[Highlight, ...] = ()
+    en: str = ""
 
 
 class InterviewService:
-    def __init__(self, text_service, *, language=DEFAULT_INTERVIEW_LANGUAGE):
+    def __init__(self, text_service, *, language=DEFAULT_INTERVIEW_LANGUAGE,
+                 answer_language=None, translation_language=None):
         self.text_service = text_service
         self.language = language
-        self.bilingual = language == "ja"
-        self.output_languages = ("ja", "zh") if self.bilingual else ("zh",)
+        self.answer_language = language if answer_language is None else answer_language
+        if translation_language is None:
+            translation_language = DEFAULT_TRANSLATION_LANGUAGES[language]
+        self.bilingual = bool(translation_language and translation_language != self.answer_language)
+        self.output_languages = ((self.answer_language, translation_language)
+                                 if self.bilingual else (self.answer_language,))
 
     async def classify(self, question):
         return await self.text_service.structured(
@@ -121,6 +130,11 @@ class InterviewService:
         relevant = select_facts(facts, question, categories)
         slots = 2 - len(relevant)
         excerpts = select_excerpts(personal_info, categories, question)[:slots] if slots else ()
+        if "en" in self.output_languages:
+            # Stored facts have approved Japanese and Chinese text. Treat their English
+            # translations as new claims and verify them against the approved source.
+            excerpts = (*relevant, *excerpts)
+            relevant = ()
         sources = {f"excerpt_{index}": value for index, value in enumerate(excerpts, 1)}
         context = {name: getattr(personal_info, name) for name in ("company", "role", "scenario")}
         context = {name: value for name, value in context.items() if value}
@@ -139,10 +153,22 @@ class InterviewService:
             {"id": fact.id, **{lang: getattr(fact, lang) for lang in self.output_languages}}
             for fact in relevant
         ]}
-        language_prompt = (f"日语使用自然敬体，输出对应的简体中文。目标日语难度为 JLPT {level}。{ANSWER_LEVELS[level]}"
-                           if self.bilingual else "只写简体中文。使用自然的普通话口语，适合中国企业面试。")
+        style = {
+            "ja": f"日语使用自然敬体。目标日语难度为 JLPT {level}。{ANSWER_LEVELS[level]}",
+            "zh": "使用自然的普通话口语，适合中国企业面试。",
+            "en": "使用自然、简洁、容易开口的英语口语，适合面试。",
+        }[self.answer_language]
+        primary = TRANSLATION_LANGUAGES[self.answer_language]
+        language_prompt = f"口述回答用{primary}。{style}"
+        if self.bilingual:
+            secondary = TRANSLATION_LANGUAGES[self.output_languages[1]]
+            language_prompt += f"另提供语义一致的{secondary}译文。"
         base_prompt = _DRAFT_PROMPT + language_prompt + _DOMAIN_PROMPT
-        no_profile = _NO_PROFILE_PROMPT + ("保持日语和中文的占位符含义一致。" if self.bilingual else "")
+        no_profile = _NO_PROFILE_PROMPT
+        if "en" in self.output_languages:
+            no_profile += "英语字段的占位符用英语，例如【School name】【Major】【Actual experience】。"
+        if self.bilingual:
+            no_profile += "保持两种语言的占位符含义一致。"
         draft_prompt = base_prompt
         if not (relevant or sources):
             draft_prompt += no_profile
@@ -160,7 +186,7 @@ class InterviewService:
         if technical_references:
             payload["technical_references"] = technical_references
         if sources:
-            payload["excerpts"] = [{"id": key, "text": value} for key, value in sources.items()]
+            payload["excerpts"] = [{"id": key, "text": _source_text(value)} for key, value in sources.items()]
             draft_schema = {
                 **base_schema,
                 "excerpt_ids": {"type": "array", "items": {"type": "string", "enum": list(sources)}},
@@ -207,10 +233,11 @@ class InterviewService:
             for lang in self.output_languages
         }
         verification = {**sections, **grounding}
-        verify_prompt = (
-            "独立核验输入中的双语面试建议。两种语言需语义一致。"
-            if self.bilingual else "独立核验输入中的中文面试建议。回答必须是自然的简体中文。"
-        ) + _VERIFY_PROMPT
+        verify_prompt = "独立核验输入中的面试建议。核对各字段的语种和口语表达。"
+        verify_prompt += "、".join(f"{lang} 为{TRANSLATION_LANGUAGES[lang]}" for lang in self.output_languages) + "。"
+        if self.bilingual:
+            verify_prompt += "两种语言需语义一致。"
+        verify_prompt += _VERIFY_PROMPT
         if grounding:
             verify_prompt += _DOMAIN_VERIFY_PROMPT
         if not (relevant or sources):
@@ -241,7 +268,7 @@ class InterviewService:
             rendered[lang] = "\n".join(part for part in parts if part)
         if not all(rendered.values()):
             return None
-        return Answer(rendered.get("ja", ""), rendered["zh"])
+        return Answer(**rendered)
 
     async def annotate_answer(self, answer):
         if not (has_annotation_candidates(answer.ja) or has_highlight_candidates(answer.ja)):
@@ -254,6 +281,10 @@ class InterviewService:
         return replace(answer, annotations=annotations, highlights=highlights)
 
 
+def _source_text(source):
+    return source.zh if isinstance(source, Fact) else source
+
+
 def _excerpt_claims(draft, sources, languages):
     if not sources:
         return []
@@ -262,7 +293,12 @@ def _excerpt_claims(draft, sources, languages):
     if (len(set(ids)) != len(ids) or any(key not in sources for key in ids)
             or any(len(values) != len(ids) or not all(values) for values in claims.values())):
         raise ServiceError(_FACT_ERROR)
-    return [
-        {"source": sources[key], **{lang: values[index] for lang, values in claims.items()}}
-        for index, key in enumerate(ids)
-    ]
+    grounded_claims = []
+    for index, key in enumerate(ids):
+        source = sources[key]
+        statements = {lang: values[index] for lang, values in claims.items()}
+        if isinstance(source, Fact):
+            # Do not replace already approved wording with an AI paraphrase.
+            statements.update({lang: getattr(source, lang) for lang in languages if lang != "en"})
+        grounded_claims.append({"source": _source_text(source), **statements})
+    return grounded_claims

@@ -21,7 +21,7 @@ def test_speech_models_use_their_own_credentials():
     assert SPEECH_MODELS["qwen-3.1"].provider is SPEECH_MODELS["qwen-3.0"].provider is QWEN
     assert SPEECH_MODELS["deepseek"].provider is DEEPSEEK
     assert SPEECH_MODELS["doubao"].provider.key_env == "DOUBAO_ASR_API_KEY"
-    assert "ja" not in SPEECH_MODELS["doubao"].languages
+    assert set(SPEECH_MODELS["doubao"].languages) == {"zh", "en"}
     assert SPEECH_MODELS["local"].provider is None
 
 
@@ -32,7 +32,11 @@ def test_realtime_audio_keeps_silence_at_the_provider_sample_rate():
     assert processor.finish_turn() == []
 
 
-def test_qwen_streams_audio_between_start_and_finish_and_reuses_sentence_id():
+@pytest.mark.parametrize("language,preview,final", [
+    ("ja", "面接", "面接を始めます。"),
+    ("en", "Let's start", "Let's start the interview."),
+])
+def test_qwen_streams_audio_between_start_and_finish_and_reuses_sentence_id(language, preview, final):
     async def exercise():
         messages = asyncio.Queue()
         events = []
@@ -46,17 +50,17 @@ def test_qwen_streams_audio_between_start_and_finish_and_reuses_sentence_id():
             async def send(self, packet):
                 if isinstance(packet, bytes):
                     assert packet == bytes(3200)
-                    response("result-generated", {"sentence_id": 1, "text": "面接", "sentence_end": False})
+                    response("result-generated", {"sentence_id": 1, "text": preview, "sentence_end": False})
                 else:
                     request = json.loads(packet)
                     if request["header"]["action"] == "run-task":
                         assert request["payload"]["model"] == "qwen-audio-3.0-asr-flash-streaming"
-                        assert request["payload"]["parameters"]["language_hints"] == ["ja"]
+                        assert request["payload"]["parameters"]["language_hints"] == [language]
                         assert request["payload"]["parameters"]["sample_rate"] == 16000
                         response("task-started")
                     else:
                         assert request["header"]["action"] == "finish-task"
-                        response("result-generated", {"sentence_id": 1, "text": "面接を始めます。", "sentence_end": True})
+                        response("result-generated", {"sentence_id": 1, "text": final, "sentence_end": True})
                         response("task-finished")
 
             recv = messages.get
@@ -78,11 +82,11 @@ def test_qwen_streams_audio_between_start_and_finish_and_reuses_sentence_id():
 
         await asyncio.wait_for(run_qwen(
             "speech-only", audio(), on_event, lambda: None,
-            model=SPEECH_MODELS["qwen-3.0"], language="ja", connect=connect,
+            model=SPEECH_MODELS["qwen-3.0"], language=language, connect=connect,
         ), 2)
         assert [(e["type"], e["item_id"], e["transcript"]) for e in events] == [
-            (LOCAL_PREVIEW_EVENT, "qwen-1", "面接"),
-            (COMPLETE, "qwen-1", "面接を始めます。"),
+            (LOCAL_PREVIEW_EVENT, "qwen-1", preview),
+            (COMPLETE, "qwen-1", final),
         ]
 
     asyncio.run(exercise())

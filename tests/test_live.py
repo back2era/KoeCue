@@ -37,6 +37,30 @@ def test_chinese_transcript_automatically_suggests_without_translation(monkeypat
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("target,expected", [("ja", [("Good morning.", "en", "ja")]), ("en", []), ("", [])])
+def test_english_transcript_dispatches_only_the_selected_translation(target, expected, monkeypatch):
+    from ai_japanese_interview_assistant import live
+
+    async def exercise():
+        calls = []
+
+        class Translator:
+            async def translate(self, text, *, source_language, target_language):
+                calls.append((text, source_language, target_language))
+                yield "おはようございます。"
+
+        worker = LiveWorker(1, None, "test", language="en", translation_language=target,
+                            answer_language="zh")
+        worker.service = Translator()
+        worker.on_event({"type": "conversation.item.input_audio_transcription.completed",
+                         "item_id": "sample", "transcript": "Good morning."})
+        await asyncio.gather(*worker.jobs.values())
+        assert calls == expected
+
+    monkeypatch.setattr(live, "record", lambda *args: None)
+    asyncio.run(exercise())
+
+
 def test_revoking_personal_info_cancels_a_scoped_answer():
     async def exercise():
         entered = asyncio.Event()

@@ -219,7 +219,7 @@ def test_answer_defaults_to_focus_readings_and_expands_without_changing_copy(mon
         def render(text, annotations=(), **options):
             rendered.append((text, annotations, options))
 
-        monkeypatch.setattr(cloud.answer_ja, "set_answer", render)
+        monkeypatch.setattr(cloud.answer_body, "set_answer", render)
         ja = "実装の前にチームで要件を確認し、役割と優先順位を整理します。次にテストを進めます。"
         terms = ("実装", "チーム", "要件", "役割", "優先順位", "整理", "テスト")
         labels = ("じっそう", "team", "ようけん", "やくわり", "ゆうせんじゅんい", "せいり", "test")
@@ -478,7 +478,8 @@ def test_worker_shows_and_translates_only_the_final_japanese_segment(monkeypatch
         requests = []
 
         class Service:
-            async def translate(self, text):
+            async def translate(self, text, *, source_language, target_language):
+                assert (source_language, target_language) == ("ja", "zh")
                 requests.append(text)
                 yield "在"
                 yield "日本工作"
@@ -527,7 +528,7 @@ def test_history_keeps_old_rows_and_scroll_position_when_a_new_segment_arrives(m
         cloud.state = "active"
         keys = [(1, 1, str(index)) for index in range(500)]
         cloud.rows.update({
-            key: Row(transcript=f"質問 {key[-1]}", zh=f"问题 {key[-1]}", finalized=True)
+            key: Row(transcript=f"質問 {key[-1]}", translated=f"问题 {key[-1]}", finalized=True)
             for key in keys
         })
         cloud.dirty = True
@@ -636,7 +637,7 @@ def test_chinese_mode_saves_and_keeps_japanese_history_readable(monkeypatch):
     try:
         wait_until(app, lambda: cloud.interview_language.isEnabled())
         assert cloud.selected_language() == "ja"
-        cloud.interview_language.setCurrentIndex(cloud.interview_language.findData("zh"))
+        cloud.language_preset.setCurrentIndex(cloud.language_preset.findData("zh"))
         cloud.settings.accept()
         wait_until(app, lambda: cloud.settings_worker is None)
         assert cloud.original_title.text() == "中文原文"
@@ -648,7 +649,7 @@ def test_chinese_mode_saves_and_keeps_japanese_history_readable(monkeypatch):
         cloud.session_id = 2
         cloud.generation = 1
         old = (1, 1, "japanese")
-        cloud.rows[old] = Row(transcript="最初の質問", zh="第一个问题", finalized=True)
+        cloud.rows[old] = Row(transcript="最初の質問", translated="第一个问题", finalized=True)
         cloud.mark_changed(old)
         cloud.render_history()
 
@@ -660,8 +661,8 @@ def test_chinese_mode_saves_and_keeps_japanese_history_readable(monkeypatch):
         cloud.render_history()
         assert cloud.original_title.text() == "中文原文"
         assert cloud.original.text() == "请介绍你的项目。"
-        assert cloud.answer_ja.text() == "我负责了【你的真实工作】。"
-        assert cloud.answer_zh.isHidden() and cloud.full_annotations.isHidden()
+        assert cloud.answer_body.text() == "我负责了【你的真实工作】。"
+        assert cloud.answer_translation.isHidden() and cloud.full_annotations.isHidden()
         assert cloud.retry.isHidden() and not cloud.interview_language.isEnabled()
         cloud.copy.click()
         assert app.clipboard().text() == "我负责了【你的真实工作】。"
@@ -697,7 +698,8 @@ def test_api_actions_use_selected_model_without_starting_capture(monkeypatch):
     app = QApplication.instance() or QApplication([])
     calls = []
 
-    async def check(service, *, language):
+    async def check(service, *, language, translation_language):
+        assert (language, translation_language) == ("ja", "zh")
         calls.append(service.model)
 
     async def list_models(service):
