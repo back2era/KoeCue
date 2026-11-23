@@ -1,7 +1,7 @@
 """Local storage, document import, and excerpt selection for interview context."""
 from codecs import BOM_UTF16_BE, BOM_UTF16_LE
 from contextlib import suppress
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from io import BytesIO
 import json
 import logging
@@ -14,6 +14,10 @@ from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 from zlib import error as ZlibError
 
+from .personal_details import (
+    EXPERIENCE_KINDS, LONG_FIELDS, MAX_DETAIL, MAX_RECORDS, PREFERENCE_OPTIONS, AnswerPreferences, Basics,
+    Education, Experience, Target, filled, normalized,
+)
 from .profiles import ProfileError, app_directory
 
 
@@ -30,7 +34,7 @@ _FIELD_LIMITS = {
     "role": ("目标岗位", MAX_FIELD),
     "scenario": ("面试场景", MAX_SCENARIO),
 }
-_STORE_LIMIT = 1_024 + 6 * sum(limit for _, limit in _FIELD_LIMITS.values())
+_STORE_LIMIT = 512 * 1024
 _IMPORT_LIMIT = 8 * 1_024 * 1_024
 _STREAM_LIMIT = 2 * 1_024 * 1_024
 _PDF_PAGE_LIMIT = 24
@@ -53,9 +57,43 @@ class PersonalInfo:
     company: str = ""
     role: str = ""
     scenario: str = ""
+    basics: Basics = Basics()
+    education: tuple[Education, ...] = ()
+    targets: tuple[Target, ...] = ()
+    active_target: int = 0
+    experiences: tuple[Experience, ...] = ()
+    preferences: AnswerPreferences = AnswerPreferences()
 
     def __bool__(self):
-        return any(getattr(self, field).strip() for field in _FIELD_LIMITS)
+        return (any(getattr(self, field).strip() for field in _FIELD_LIMITS)
+                or bool(self.education or self.targets or self.experiences) or filled(self.basics))
+
+    @property
+    def target_context(self):
+        if self.targets:
+            return {key: value for key, value in asdict(self.targets[self.active_target]).items() if value}
+        return {key: getattr(self, key) for key in ("company", "role", "scenario") if getattr(self, key)}
+
+    @property
+    def has_evidence(self):
+        return bool(self.background.strip() or self.resume.strip()
+                    or self.education or self.experiences or filled(self.basics))
+
+
+def _decode_profile(payload):
+    version = payload["version"]
+    data = dict(payload["personal"])
+    if type(version) is not int or version not in (1, 2):
+        raise ValueError
+    if version == 2:
+        for key, row_type in (("education", Education), ("experiences", Experience), ("targets", Target)):
+            rows = data.get(key, [])
+            if not isinstance(rows, list) or len(rows) > MAX_RECORDS:
+                raise ValueError
+            data[key] = tuple(row_type(**row) for row in rows)
+        data["basics"] = Basics(**data.get("basics", {}))
+        data["preferences"] = AnswerPreferences(**data.get("preferences", {}))
+    return PersonalInfo(**data)
 
 
 def _validate_personal(info):
@@ -67,6 +105,30 @@ def _validate_personal(info):
             raise PersonalError(f"{label}含无效文本。")
         if len(value) > limit:
             raise PersonalError(f"{label}最多填写 {limit} 字。")
+    for rows, row_type in ((info.education, Education), (info.experiences, Experience), (info.targets, Target)):
+        if not isinstance(rows, tuple) or len(rows) > MAX_RECORDS or any(not isinstance(row, row_type) for row in rows):
+            raise PersonalError(f"每类资料最多保存 {MAX_RECORDS} 条记录。")
+    if (type(info.active_target) is not int or not 0 <= info.active_target < max(1, len(info.targets))
+            or not isinstance(info.basics, Basics) or not isinstance(info.preferences, AnswerPreferences)):
+        raise PersonalError("个人资料格式无效。")
+    for row in (info.basics, *info.education, *info.experiences, *info.targets):
+        for field in fields(row):
+            name = field.name
+            value = getattr(row, name)
+            if name == "priority":
+                if type(value) is not bool:
+                    raise PersonalError("经历优先设置无效。")
+                continue
+            limit = MAX_DETAIL if name in LONG_FIELDS else MAX_FIELD
+            if not isinstance(value, str) or len(value) > limit or _INVALID_TEXT.search(value):
+                raise PersonalError(f"单个资料字段最多可填写 {limit} 字，请检查较长的内容。")
+        if isinstance(row, Experience) and row.kind not in EXPERIENCE_KINDS:
+            raise PersonalError("经历类型无效。")
+    if info.basics.japanese_level not in PREFERENCE_OPTIONS["level"] or any(
+        not isinstance(value, str) or value not in PREFERENCE_OPTIONS[key]
+        for key, value in asdict(info.preferences).items()
+    ):
+        raise PersonalError("回答偏好或日语等级无效。")
 
 
 class PersonalStore:
@@ -83,9 +145,7 @@ class PersonalStore:
             if len(raw) > _STORE_LIMIT:
                 raise ValueError
             payload = json.loads(raw.decode("utf-8"))
-            if type(payload["version"]) is not int or payload["version"] != 1:
-                raise ValueError
-            info = PersonalInfo(**payload["personal"])
+            info = _decode_profile(payload)
             _validate_personal(info)
             return info
         except FileNotFoundError:
@@ -103,7 +163,7 @@ class PersonalStore:
             with NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent,
                                    prefix=".personal-", suffix=".tmp", delete=False) as file:
                 temporary = Path(file.name)
-                json.dump({"version": 1, "personal": asdict(info)}, file, ensure_ascii=False, indent=2)
+                json.dump({"version": 2, "personal": asdict(info)}, file, ensure_ascii=False, indent=2)
                 file.write("\n")
                 file.flush()
                 os.fsync(file.fileno())
@@ -255,12 +315,12 @@ _CATEGORY_TERMS = {
 _SECTION_TITLES = {
     title: category
     for category, titles in {
-        "education": ("education", "educational background", "学歴", "学历", "學歷", "教育背景", "教育经历", "教育經歷"),
+        "education": ("education", "educational background", "学歴", "学历", "學歷", "教育背景", "教育经历", "教育經歷", "学业经历", "academic background", "education background"),
         "skill": ("skills", "technical skills", "スキル", "技術スキル", "技能", "专业技能", "專業技能"),
         "experience": ("experience", "work experience", "professional experience", "職歴", "職務経歴", "工作经历",
                        "工作經歷", "实习经历", "實習經歷"),
         "project": ("projects", "personal projects", "プロジェクト", "プロジェクト経験", "项目经历", "項目經歷",
-                    "项目经验", "專案經驗"),
+                    "项目经验", "專案經驗", "项目与实习", "项目与实习经历", "research projects"),
         "target": ("career objective", "objective", "志望動機", "求职意向", "求職意向"),
         "private": ("contact", "contact information", "personal information", "連絡先", "個人情報",
                     "联系方式", "聯絡方式", "个人信息", "個人資訊"),
@@ -299,7 +359,7 @@ _GENERIC_TOPIC_WORDS = {
 }
 _EXCERPT_BREAKS = re.compile(r"(?<=[。！？!?])\s*|(?<=\.)\s+")
 _YEAR_MONTH = r"(?:19|20)\d{2}(?:[-./](?:0?[1-9]|1[0-2])\b|年(?:\d{1,2}月)?)?"
-_DATE_RANGE = re.compile(rf"(?<!\d){_YEAR_MONTH}\s*[-–—~～至]\s*{_YEAR_MONTH}(?!\d)")
+RESUME_DATE_RANGE = re.compile(rf"(?<!\d){_YEAR_MONTH}\s*[-–—~～至]\s*{_YEAR_MONTH}(?!\d)")
 _CONTACT_DETAIL = re.compile(
     r"@\S+\.\S+|(?<!\d)\+?\d(?:[ ()\-.]*\d){9,}(?!\d)"
     r"|^\s*(?:address|e-?mail|phone|mobile|tel|住所|地址|電話|电话|連絡先|联系方式)\s*[:：]",
@@ -334,19 +394,28 @@ def has_topic_cues(question):
     return bool(words or _subjects_in(question, words))
 
 
+def resume_section(title):
+    title = normalized(title).strip(" \t#*•・[]【】:–—-")
+    return _SECTION_TITLES.get(title, "")
+
+
+def has_contact_detail(text):
+    return bool(_CONTACT_DETAIL.search(RESUME_DATE_RANGE.sub(" ", normalized(text))))
+
+
 def _excerpt_candidates(source):
     section = None
     lines_left = 0
     for line in source.splitlines():
         normalized = unicodedata.normalize("NFKC", line).casefold()
-        title = normalized.strip(" \t#*•・[]【】:–—-")
-        if title in _SECTION_TITLES:
-            section = _SECTION_TITLES[title]
+        heading = resume_section(line)
+        if heading != "":
+            section = heading
             lines_left = 3
             continue
         if section == "private" or not normalized.strip():
             continue
-        if not _CONTACT_DETAIL.search(_DATE_RANGE.sub(" ", normalized)):
+        if not has_contact_detail(line):
             for sentence in _EXCERPT_BREAKS.split(line):
                 excerpt = sentence.strip()
                 if excerpt and len(excerpt) <= MAX_EXCERPT:
