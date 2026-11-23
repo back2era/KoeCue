@@ -69,6 +69,7 @@ def test_existing_folder_is_preserved(tmp_path):
 
 
 @pytest.mark.parametrize("code, method", [
+    ("local", "from_whisper"),
     ("sensevoice-int8", "from_sense_voice"), ("sensevoice-fp32", "from_sense_voice"),
     ("qwen3-asr-0.6b", "from_qwen3_asr"), ("qwen3-asr-1.7b", "from_qwen3_asr"),
 ])
@@ -89,6 +90,11 @@ def test_decoder_uses_selected_variant_and_16_khz_mono(tmp_path, monkeypatch, co
     if method == "from_sense_voice":
         assert options["language"] == "ja"
         assert options["model"].endswith(MANAGED_MODELS[code].files[0].path)
+    elif method == "from_whisper":
+        assert (options["language"], options["task"]) == ("ja", "transcribe")
+        assert options["encoder"].endswith("base-encoder.int8.onnx")
+        assert options["decoder"].endswith("base-decoder.int8.onnx")
+        assert options["tokens"].endswith("base-tokens.txt")
     else:
         assert options["encoder"].endswith(str(Path(MANAGED_MODELS[code].files[2].path)))
         assert options["tokenizer"].endswith("tokenizer")

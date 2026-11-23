@@ -41,7 +41,6 @@ SPEECH_MODELS = {
     "qwen-3.1": SpeechModel("千问 Qwen-Audio 3.1 · 实时", QWEN, "qwen-audio-3.1-asr-flash-streaming", True),
     "qwen-3.0": SpeechModel("千问 Qwen-Audio 3.0 · 实时", QWEN, "qwen-audio-3.0-asr-flash-streaming", True),
     "deepseek": SpeechModel("DeepSeek · 停顿后转写", DEEPSEEK),
-    "local": SpeechModel("本地 Whisper · 需自行安装", None),
     **{code: SpeechModel(variant.label, None) for code, variant in MANAGED_MODELS.items()},
 }
 

@@ -56,7 +56,7 @@ def version_resource(path):
 
 def copy_notices(release):
     notices = release / "licenses"
-    shutil.copytree(ROOT / "licenses", notices, ignore=shutil.ignore_patterns("Whisper-MIT.txt"))
+    shutil.copytree(ROOT / "licenses", notices)
     shutil.copy2(Path(sys.base_prefix) / "LICENSE.txt", notices / "Python-LICENSE.txt")
     for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
         name, pinned, _ = line.partition("==")
@@ -99,10 +99,10 @@ def verify(release, work):
         raise SystemExit(f"The executable did not produce a package check (exit {result.returncode}).")
     checks = json.loads(report.read_text(encoding="utf-8"))
     if (result.returncode != 0 or checks.get("version") != APP_VERSION
-            or checks.get("bundled_whisper") is not False or checks.get("qt_platform") != "windows"
+            or checks.get("legacy_whisper_runtime") is not False or checks.get("qt_platform") != "windows"
             or checks.get("main_window_tabs") != 4 or checks.get("local_sherpa") is not True
             or checks.get("speech_models") != [
-                "sensevoice-int8", "sensevoice-fp32", "qwen3-asr-0.6b", "qwen3-asr-1.7b",
+                "sensevoice-int8", "sensevoice-fp32", "qwen3-asr-0.6b", "qwen3-asr-1.7b", "local",
                 "qwen-3.1", "qwen-3.0", "openai", "doubao", "deepseek",
             ]):
         raise SystemExit(f"Packaged application failed its check:\n{json.dumps(checks, ensure_ascii=False, indent=2)}")

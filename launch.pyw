@@ -30,8 +30,9 @@ def verify_installation(report):
         result = {"version": APP_VERSION, "qt_platform": app.platformName(), "devices": len(devices),
                   "main_window_tabs": window.tabs.count(),
                   "speech_models": speech_codes,
-                  "local_sherpa": hasattr(OfflineRecognizer, "from_qwen3_asr"),
-                  "bundled_whisper": find_spec("faster_whisper") is not None}
+                  "local_sherpa": all(hasattr(OfflineRecognizer, f"from_{engine}")
+                                      for engine in ("sense_voice", "qwen3_asr", "whisper")),
+                  "legacy_whisper_runtime": find_spec("faster_whisper") is not None}
     except Exception:
         result = {"error": traceback.format_exc()}
     finally:

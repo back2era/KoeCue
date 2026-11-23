@@ -46,7 +46,7 @@ GitHub 已发布的 0.0.1 ZIP 对应早期日语版，内含 Whisper。中、日
 | [DeepSeek 语音识别](https://api-docs.deepseek.com/zh-cn/guides/asr/) | 中文、日语、英语，停顿后提交一段 | `DEEPSEEK_API_KEY` |
 | [本地 SenseVoice](https://k2-fsa.github.io/sherpa/onnx/sense-voice/index.html) | 中文、日语、英语。本机生成字幕，Small INT8 约 240 MB，Small FP32 约 938 MB | 无 |
 | [本地 Qwen3-ASR](https://k2-fsa.github.io/sherpa/onnx/qwen3-asr/pretrained.html) | 中文、日语、英语。本机生成字幕，0.6B INT8 约 987 MB，1.7B INT8 约 2.40 GB | 无 |
-| 本地 Whisper | 中文、日语、英语。源码可选，需自行安装 | 无 |
+| [本地 Whisper](https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base) | 中文、日语、英语。本机生成字幕，Base INT8 约 161 MB | 无 |
 
 选本地模型后，先选版本，再点「下载」。下载并校验完成后点「使用此模型」。模型默认放在 `%LOCALAPPDATA%\AIJapaneseInterviewAssistant\models`，C 盘空间不足可以先点「更改目录」选 E 盘。下载只在手动点击时开始，切换目录后会从新目录查找模型。模型和目录会在下次启动时恢复。本地转写无需语音 Key，字幕翻译和 AI 回答继续使用所选文本 API。
 
@@ -82,11 +82,11 @@ GitHub 已发布的 0.0.1 ZIP 对应早期日语版，内含 Whisper。中、日
 
 | 状态 | 范围 |
 | --- | --- |
-| 已完成 | Windows 便携构建、独立语音识别页、SenseVoice 与 Qwen3-ASR 按需下载、中日英字幕与回答语言组合、历史记录、五套主题和八家文本 API 适配 |
+| 已完成 | Windows 便携构建、独立语音识别页、SenseVoice、Qwen3-ASR 与 Whisper 按需下载、中日英字幕与回答语言组合、历史记录、五套主题和八家文本 API 适配 |
 | 待验证 | 各服务商真实 API、实际会议采集、30 分钟联调、端到端延迟和无 Python 的干净 Windows 11 |
 | 后续 | 按应用独立采集、根据对话自动切换识别和回答语言 |
 
-Windows 11 x64 的 203 项离线测试通过。已验证 SenseVoice INT8 和 Qwen3-ASR 0.6B 的模型下载校验及公开日语样音转写。便携构建通过窗口启动、音源枚举和 sherpa-onnx 加载检查。SenseVoice FP32、Qwen3-ASR 1.7B 及各云端识别服务的实际速度和准确率待测试。
+Windows 11 x64 的 206 项离线测试通过。SenseVoice INT8 和 Qwen3-ASR 0.6B 已验证下载校验及公开日语样音转写。Whisper Base INT8 已验证在软件内下载、启用及中、日、英公开样音转写。便携构建通过窗口启动、音源枚举和 sherpa-onnx 加载检查。SenseVoice FP32、Qwen3-ASR 1.7B 及各云端识别服务的实际速度和准确率待测试。
 
 ## 源码运行与打包
 
@@ -101,14 +101,9 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m ai_japanese_interview_assistant
 ```
 
-源码安装后可直接打开「语音识别」下载 SenseVoice 或 Qwen3-ASR。已有完整本地模型和可选运行库的源码用户仍能选择「本地 Whisper」。首次使用该选项时，在源码环境单独安装运行库和模型。
+源码和当前便携构建均可在「语音识别」页下载 Whisper Base INT8。已能使用旧版 faster-whisper 的源码环境可以继续使用旧模型，也可以在同一页下载新版。
 
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-local.txt
-.\.venv\Scripts\python.exe -m ai_japanese_interview_assistant.local_asr --download-model
-```
-
-打包脚本会构建 Windows 窗口程序，验证可启动、可枚举设备、支持云端选项并可加载 sherpa-onnx 运行库，再输出 `dist/KoeCue-0.0.1.zip`。新 ZIP 不包含本地模型权重或 Whisper 运行库。
+打包脚本会构建 Windows 窗口程序，验证可启动、可枚举设备、支持云端选项并可加载 sherpa-onnx 运行库，再输出 `dist/KoeCue-0.0.1.zip`。本地模型权重由用户在软件中按需下载。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt

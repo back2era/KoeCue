@@ -1,5 +1,4 @@
 """Speech engine selection and on-demand local model downloads."""
-import sys
 from threading import Event
 
 import httpx
@@ -11,7 +10,7 @@ from PySide6.QtWidgets import (
 from .config import INTERVIEW_LANGUAGES
 from .glass import GlassComboBox, glass_panel, plain_label
 from .local_asr import LocalAsrError
-from .local_models import DownloadCancelled, MANAGED_MODELS, download_model, model_available, models_directory
+from .local_models import DownloadCancelled, MANAGED_MODELS, download_model, model_installation, models_directory
 from .speech import SPEECH_MODELS
 
 
@@ -94,8 +93,6 @@ class SpeechModelsPane(QWidget):
         for group, families in SPEECH_GROUPS:
             menu_layout.addWidget(plain_label(group, "muted"))
             for name, codes in families:
-                if codes == ("local",) and getattr(sys, "frozen", False):
-                    continue
                 button = QPushButton(name)
                 button.setCheckable(True)
                 button.setProperty("nav", True)
@@ -175,7 +172,8 @@ class SpeechModelsPane(QWidget):
     def show_family(self, index, selected=None):
         name, codes = self.families[index]
         self.family_buttons.button(index).setChecked(True)
-        self.title.setText(name)
+        model = MANAGED_MODELS.get(codes[0])
+        self.title.setText(model.label if model and len(codes) == 1 else name)
         with QSignalBlocker(self.variants):
             self.variants.clear()
             for code in codes:
@@ -194,7 +192,7 @@ class SpeechModelsPane(QWidget):
         speech = SPEECH_MODELS[code]
         model = MANAGED_MODELS.get(code)
         directory = models_directory(self.cloud.speech_models_dir)
-        installed = model is not None and model_available(directory, model)
+        installation = model_installation(directory, model) if model else ""
         current = self.cloud.speech_code == code
         compatible = self.cloud.selected_language() in speech.languages
         configurable = self.cloud.can_configure_speech() and not self.closing
@@ -205,21 +203,25 @@ class SpeechModelsPane(QWidget):
         self.directory.setToolTip(str(directory))
         self.directory_row.setVisible(model is not None)
         self.choose_directory.setEnabled(configurable and self.worker is None)
-        self.download.setVisible(model is not None and not installed)
-        self.download.setEnabled(self.worker is None and self.cloud.preferences_ready and not self.closing)
-        self.use.setEnabled(configurable and compatible and not current and (model is None or installed))
-        self.use.setText("使用中" if current else "使用此模型")
+        needs_download = model is not None and installation != "downloaded"
+        self.download.setVisible(needs_download)
+        download_label = "下载新版" if installation == "legacy" else "下载"
+        if model and self.variants.count() == 1:
+            download_label += f" · {display_size(model.size)}"
+        self.download.setText(download_label)
+        self.download.setEnabled(needs_download and self.worker is None and self.cloud.preferences_ready and not self.closing)
+        available = model is None or bool(installation)
+        self.use.setEnabled(configurable and compatible and not current and available)
+        self.use.setText("使用中" if current and available else "使用此模型")
         self.cloud.speech_help.setVisible(current)
         show_key = current and self.cloud.speech_key_provider is not None
         self.cloud.speech_key_row.setVisible(show_key)
         if not compatible:
             status = "不支持当前识别语言"
         elif model:
-            status = "已下载" if installed else "未下载"
-        elif speech.provider:
-            status = ("API Key 已配置" if self.cloud.asr_key() else "等待配置 API Key") if current else "需要 API Key"
+            status = {"downloaded": "已下载", "legacy": "已安装旧版", "": "未下载"}[installation]
         else:
-            status = "在源码环境安装 Whisper 后可用"
+            status = ("API Key 已配置" if self.cloud.asr_key() else "等待配置 API Key") if current else "需要 API Key"
         self.state.setText(status)
         self.progress.setVisible(self.worker is not None)
         self.cancel.setVisible(self.worker is not None)

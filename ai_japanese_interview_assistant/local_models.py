@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 
 import httpx
 
-from .local_asr import LocalAsrError
+from .local_asr import LocalAsrError, load_decoder, local_model_available
 from .profiles import app_directory
 
 
@@ -37,6 +37,7 @@ SENSEVOICE_SOURCE = (
     "/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07"
 )
 QWEN3_SOURCE = "https://modelscope.cn/models/zengshuishui/Qwen3-ASR-onnx/resolve/cb045ad80b8970c9d411d463e5b78991a566596c"
+WHISPER_SOURCE = "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve/bb53ee204431c90d314c1cc08d28d23e5b7927cc"
 
 SENSEVOICE_TOKENS = ModelFile("tokens.txt", 315894, "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc")
 QWEN3_TOKENIZER = (
@@ -69,6 +70,12 @@ MANAGED_MODELS = {
             ModelFile("model_1.7B/encoder.int8.onnx", 314222162, "436fbd910a0c8914851e5ac1354e807be9f283d08a5da728adaa609731c41469"),
             *QWEN3_TOKENIZER,
         )),
+        # Keep the saved speech model ID used by earlier versions.
+        ModelVariant("local", "Whisper · Base INT8", "whisper", WHISPER_SOURCE, (
+            ModelFile("base-encoder.int8.onnx", 29120534, "0b8fb1304b6109976038efff5ace81720e00386f3ff6b54ee8c75291ca0a1e11"),
+            ModelFile("base-decoder.int8.onnx", 130672026, "9759d217388a01b3a4c7c15533201067b48ae819c4daafc8624e64b9409dc02d"),
+            ModelFile("base-tokens.txt", 816730, "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126"),
+        )),
     )
 }
 
@@ -84,6 +91,15 @@ def model_available(directory, model):
                    for file in model.files)
     except OSError:
         return False
+
+
+def model_installation(directory, model):
+    """Prefer the managed weights and recognize usable legacy Whisper installs."""
+    if model_available(directory, model):
+        return "downloaded"
+    if model.engine == "whisper" and local_model_available():
+        return "legacy"
+    return ""
 
 
 class DownloadCancelled(Exception):
@@ -143,7 +159,13 @@ def download_model(directory, model, client, *, cancelled=None, progress=lambda 
 
 def load_managed_decoder(code, *, directory, language):
     model = MANAGED_MODELS[code]
-    if not model_available(directory, model):
+    installation = model_installation(directory, model)
+    if installation == "legacy":
+        try:
+            return load_decoder(language=language)
+        except LocalAsrError as exc:
+            raise LocalAsrError("旧版 Whisper 无法启动，请在「语音识别」页下载新版。") from exc
+    if not installation:
         raise LocalAsrError("模型文件缺失，请在「语音识别」页下载模型。")
     try:
         from sherpa_onnx import OfflineRecognizer
@@ -160,6 +182,12 @@ def load_managed_decoder(code, *, directory, language):
             recognizer = OfflineRecognizer.from_sense_voice(
                 model=str(target / model.files[0].path), tokens=str(target / "tokens.txt"),
                 language=language, use_itn=True, num_threads=threads,
+            )
+        elif model.engine == "whisper":
+            recognizer = OfflineRecognizer.from_whisper(
+                encoder=str(target / model.files[0].path), decoder=str(target / model.files[1].path),
+                tokens=str(target / model.files[2].path), language=language, task="transcribe",
+                num_threads=threads,
             )
         else:
             folder = (target / model.files[0].path).parent

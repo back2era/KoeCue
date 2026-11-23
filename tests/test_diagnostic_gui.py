@@ -97,12 +97,14 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
 def test_live_start_is_ready_after_saving_settings_and_requires_an_explicit_click(monkeypatch):
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
+    from ai_japanese_interview_assistant import local_models
     from ai_japanese_interview_assistant.__main__ import MainWindow
     from ai_japanese_interview_assistant.audio import Device
     from ai_japanese_interview_assistant.diagnostic import DeviceScan
     from ai_japanese_interview_assistant.live import LiveWorker
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(local_models, "local_model_available", lambda: True)
     device = Device(10, "会议扬声器", True, 48000, 2)
     monkeypatch.setattr(DeviceScan, "run", lambda self: self.result.emit([device]))
     starts = []
@@ -346,7 +348,7 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
     import json
 
     import httpx
-    from ai_japanese_interview_assistant import live
+    from ai_japanese_interview_assistant import live, local_models
     from ai_japanese_interview_assistant.answer_format import RubyAnnotation
     from ai_japanese_interview_assistant.config import DEEPSEEK
     from ai_japanese_interview_assistant.interview import Answer
@@ -418,7 +420,8 @@ def test_deepseek_worker_translates_and_automatically_suggests_a_reply_to_a_stat
                     finished.set()
 
         monkeypatch.setattr(live, "client_for", client_for)
-        monkeypatch.setattr(live, "load_decoder", lambda **kwargs: (
+        monkeypatch.setattr(local_models, "local_model_available", lambda: True)
+        monkeypatch.setattr(local_models, "load_decoder", lambda **kwargs: (
             lambda pcm, *, preview=False: "次に担当" if preview else statement
         ))
         monkeypatch.setattr(live, "run_transcription", no_openai)

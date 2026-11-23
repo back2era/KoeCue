@@ -12,8 +12,8 @@ from .answer_format import DEFAULT_ANSWER_LEVEL
 from .audio import AudioBuffer, AudioError, capture, check_topology
 from .config import DEFAULT_INTERVIEW_LANGUAGE, DEFAULT_TRANSLATION_LANGUAGES, DEEPSEEK, OPENAI, QWEN
 from .interview import InterviewService
-from .local_asr import LocalAsrError, load_decoder, run_local_transcription
-from .local_models import MANAGED_MODELS, load_managed_decoder, models_directory
+from .local_asr import LocalAsrError, run_local_transcription
+from .local_models import load_managed_decoder, models_directory
 from .personal import PersonalInfo
 from .services import TextService, client_for, error_message
 from .speech import DOUBAO, SPEECH_MODELS, run_deepseek, run_doubao, run_qwen
@@ -158,13 +158,10 @@ class LiveWorker(QThread):
         frames = self.audio_commands()
         if provider is None:
             self.status.emit("asr", "正在加载本地语音模型…")
-            if self.speech_code in MANAGED_MODELS:
-                decoder = await asyncio.to_thread(
-                    load_managed_decoder, self.speech_code, directory=models_directory(self.speech_models_dir),
-                    language=self.language,
-                )
-            else:
-                decoder = await asyncio.to_thread(load_decoder, language=self.language)
+            decoder = await asyncio.to_thread(
+                load_managed_decoder, self.speech_code, directory=models_directory(self.speech_models_dir),
+                language=self.language,
+            )
             if not self.isInterruptionRequested():
                 self.status.emit("asr", "本地转写已就绪，正在接收语音")
                 await run_local_transcription(

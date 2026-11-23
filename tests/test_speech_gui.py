@@ -181,12 +181,18 @@ def test_language_preset_and_custom_languages_are_saved_and_history_keeps_its_la
         pane.close()
 
 
-def test_model_page_download_and_selection_persist(tmp_path, monkeypatch):
+@pytest.mark.parametrize("family_name,code,frozen,legacy", [
+    ("Qwen3-ASR", "qwen3-asr-0.6b", False, False),
+    ("Whisper", "local", True, False),
+    ("Whisper", "local", False, True),
+])
+def test_model_page_download_and_selection_persist(tmp_path, monkeypatch, family_name, code, frozen, legacy):
+    import sys
     from dataclasses import replace
     from hashlib import sha256
 
     from PySide6.QtWidgets import QApplication, QFileDialog
-    from ai_japanese_interview_assistant import cloud_gui, speech_gui
+    from ai_japanese_interview_assistant import cloud_gui, local_models, speech_gui
     from ai_japanese_interview_assistant.__main__ import MainWindow
     from ai_japanese_interview_assistant.audio import Device
     from ai_japanese_interview_assistant.diagnostic import DeviceScan
@@ -197,18 +203,16 @@ def test_model_page_download_and_selection_persist(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "fixture")
     monkeypatch.setattr(cloud_gui, "credential", lambda *args: "")
     monkeypatch.setattr(DeviceScan, "run", lambda scan: scan.result.emit([Device(0, "测试设备", True, 48000, 2)]))
+    monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+    monkeypatch.setattr(local_models, "local_model_available", lambda: legacy)
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
     window.show()
     speech = window.speech
     family = {name: i for i, (name, _) in enumerate(speech.families)}
-    code = "qwen3-asr-0.6b"
     selected_dir = tmp_path / "custom-models"
     selected_dir.mkdir()
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(selected_dir))
-    monkeypatch.setitem(
-        MANAGED_MODELS, code, replace(MANAGED_MODELS[code], files=(ModelFile("test.bin", 4, sha256(b"test").hexdigest()),)),
-    )
     downloads = []
 
     def install(directory, variant, client, *, cancelled, progress):
@@ -230,16 +234,25 @@ def test_model_page_download_and_selection_persist(tmp_path, monkeypatch):
         window.cloud.settings_toggle.setChecked(True)
         window.cloud.speech_settings.click()
         assert window.tabs.currentWidget() is speech
-        speech.family_buttons.button(family["Qwen3-ASR"]).click()
-        assert speech.variants.count() == 2
-        assert "2.40 GB" in speech.variants.itemText(1)
-        assert not speech.use.isEnabled()
+        speech.family_buttons.button(family[family_name]).click()
+        assert speech.download.isVisible()
+        if code == "local":
+            assert "161 MB" in speech.download.text()
+        else:
+            assert speech.variants.count() == 2
+            assert "2.40 GB" in speech.variants.itemText(1)
+        monkeypatch.setitem(
+            MANAGED_MODELS, code,
+            replace(MANAGED_MODELS[code], files=(ModelFile("test.bin", 4, sha256(b"test").hexdigest()),)),
+        )
+        assert speech.use.isEnabled() == legacy
         assert downloads == []
         speech.choose_directory.click()
         wait(app, window.cloud.can_configure_speech)
         assert load_preferences().speech_models_dir == str(selected_dir)
         speech.download.click()
-        wait(app, speech.use.isEnabled)
+        wait(app, lambda: speech.worker is None)
+        assert speech.use.isEnabled()
         assert downloads == [(selected_dir, code)]
         assert speech.state.text() == "已下载"
         speech.use.click()

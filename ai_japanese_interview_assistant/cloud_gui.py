@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from html import escape
 import asyncio
 import os
-import sys
 
 from PySide6.QtCore import QPoint, QSignalBlocker, QTimer, Signal, Slot, Qt
 from PySide6.QtWidgets import (
@@ -22,8 +21,7 @@ from .credentials import credential
 from .glass import DEFAULT_THEME, THEMES, GlassComboBox, GlassDialog, glass_panel, plain_label
 from .interview import Answer
 from .live import ANSWER_PENDING, LiveWorker
-from .local_asr import local_model_available
-from .local_models import MANAGED_MODELS, model_available, models_directory
+from .local_models import MANAGED_MODELS, model_installation, models_directory
 from .personal import PersonalInfo
 from .profile_gui import PrivateIO, ProfileDialog
 from .profiles import ProfileError
@@ -794,12 +792,10 @@ class CloudPane(QWidget):
             asr_issue = f"{speech.label} 不支持当前面试语言。"
             help_text = asr_issue
         elif speech.provider is None:
-            variant = MANAGED_MODELS.get(self.speech_code)
-            if variant and not model_available(models_directory(self.speech_models_dir), variant):
+            variant = MANAGED_MODELS[self.speech_code]
+            if not model_installation(models_directory(self.speech_models_dir), variant):
                 asr_issue = "请在「语音识别」页下载模型。"
             help_text = asr_issue or "音频在本机转写。"
-            if variant is None:
-                help_text = "音频在本机转写，需自行安装 Whisper 组件和模型。"
         else:
             if not self.asr_key():
                 asr_issue = f"请填写 {speech.provider.label} 的 API Key。"
@@ -1169,14 +1165,14 @@ class CloudPane(QWidget):
         self.audio_selection = (preferences.audio_name, preferences.audio_loopback)
         with QSignalBlocker(self.provider):
             self.provider.setCurrentIndex(self.provider.findData(preferences.provider))
+        self.speech_models_dir = preferences.speech_models_dir
         speech_code = preferences.speech_model
         if not speech_code:
             if preferences.provider == "openai":
                 speech_code = "openai"
-            elif not getattr(sys, "frozen", False) and local_model_available():
+            elif model_installation(models_directory(self.speech_models_dir), MANAGED_MODELS["local"]):
                 speech_code = "local"
-        self.speech_code = "" if speech_code == "local" and getattr(sys, "frozen", False) else speech_code
-        self.speech_models_dir = preferences.speech_models_dir
+        self.speech_code = speech_code
         self.auto_answer.setChecked(preferences.auto_answer)
         self.theme.setCurrentIndex(self.theme.findData(preferences.theme))
         self.answer_level.setCurrentIndex(self.answer_level.findData(preferences.answer_level))
