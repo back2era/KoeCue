@@ -100,7 +100,8 @@ def verify(release, work):
     checks = json.loads(report.read_text(encoding="utf-8"))
     if (result.returncode != 0 or checks.get("version") != APP_VERSION
             or checks.get("legacy_whisper_runtime") is not False or checks.get("qt_platform") != "windows"
-            or checks.get("main_window_tabs") != 4 or checks.get("local_sherpa") is not True
+            or checks.get("main_window_tabs") != 4 or checks.get("personal_sections") != 6
+            or checks.get("local_sherpa") is not True
             or checks.get("speech_models") != [
                 "sensevoice-int8", "sensevoice-fp32", "qwen3-asr-0.6b", "qwen3-asr-1.7b", "local",
                 "qwen-3.1", "qwen-3.0", "openai", "doubao", "deepseek",
@@ -150,7 +151,7 @@ def main():
     copy_notices(release)
     verify(release, work)
 
-    archive_name = f"{APP_NAME}-{APP_VERSION}"
+    archive_name = f"{APP_NAME}{APP_VERSION}"
     archive = Path(shutil.make_archive(str(work / archive_name), "zip", release.parent, APP_NAME))
     output = args.output_dir.resolve()
     output.mkdir(exist_ok=True)

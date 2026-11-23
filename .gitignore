@@ -17,8 +17,10 @@ __pycache__/
 *secret*.json
 *profile*.json
 personal.json
+settings.ini
 *resume*
 *简历*
+*履歴書*
 private/
 .secrets/
 recordings/

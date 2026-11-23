@@ -12,11 +12,11 @@
 
 ## 下载并打开
 
-1. 到 [GitHub Releases](https://github.com/back2era/KoeCue/releases) 下载 **`KoeCue-0.0.1.zip`**。
+1. 获取 **`KoeCue0.0.2.zip`**，或按下文从源码打包。历史版本见 [GitHub Releases](https://github.com/back2era/KoeCue/releases)。
 2. 在 Windows 文件资源管理器中右键 ZIP，选择「全部解压缩」。
 3. 打开解压后的 `KoeCue` 文件夹，双击 **`KoeCue.exe`**。
 
-GitHub 已发布的 0.0.1 ZIP 对应早期日语版，内含 Whisper。中、日、英三语面试和独立的语音识别模型选择可通过当前源码运行。当前源码的新构建只带运行库，解压后请保留同目录的 `_internal` 文件夹。
+0.0.2 支持中、日、英面试、独立的语音识别选项、PDF 简历自动填充和基于已保存经历的回答建议。解压后请保留与 `KoeCue.exe` 同目录的 `_internal` 文件夹。
 
 ## 首次使用
 
@@ -105,7 +105,7 @@ py -3.13 -m venv .venv
 
 源码和当前便携构建均可在「语音识别」页下载 Whisper Base INT8。已能使用旧版 faster-whisper 的源码环境可以继续使用旧模型，也可以在同一页下载新版。
 
-打包脚本会构建 Windows 窗口程序，验证可启动、可枚举设备、支持云端选项并可加载 sherpa-onnx 运行库，再输出 `dist/KoeCue-0.0.1.zip`。本地模型权重由用户在软件中按需下载。
+打包脚本会构建 Windows 窗口程序，验证可启动、可枚举设备、支持云端选项并可加载 sherpa-onnx 运行库，再输出 `dist/KoeCue0.0.2.zip`。本地模型权重由用户在软件中按需下载。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
