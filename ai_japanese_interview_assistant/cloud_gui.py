@@ -23,6 +23,7 @@ from .glass import DEFAULT_THEME, THEMES, GlassComboBox, GlassDialog, glass_pane
 from .interview import Answer
 from .live import ANSWER_PENDING, LiveWorker
 from .local_asr import local_model_available
+from .local_models import MANAGED_MODELS, model_available, models_directory
 from .personal import PersonalInfo
 from .profile_gui import PrivateIO, ProfileDialog
 from .profiles import ProfileError
@@ -100,6 +101,8 @@ class CloudPane(QWidget):
     idle = Signal()
     theme_changed = Signal(str)
     listening_state_changed = Signal(str)
+    open_speech_settings = Signal()
+    speech_settings_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -196,13 +199,10 @@ class CloudPane(QWidget):
         self.key.setPlaceholderText("API Key")
         self.vault_button = self.make_vault_button()
 
-        self.speech_model = GlassComboBox()
-        self.speech_model.setAccessibleName("语音识别模型")
-        self.speech_model.addItem("请选择语音识别模型", "")
-        for code, model in SPEECH_MODELS.items():
-            if code != "local" or not getattr(sys, "frozen", False):
-                self.speech_model.addItem(model.label, code)
-        self.speech_model.setCurrentIndex(self.speech_model.findData("openai"))
+        self.speech_code = "openai"
+        self.speech_models_dir = ""
+        self.speech_settings = QPushButton("管理语音识别")
+        self.speech_settings.clicked.connect(self.open_speech_settings.emit)
         self.speech_help = plain_label("", "muted")
         self.speech_key = QLineEdit()
         self.speech_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -287,7 +287,6 @@ class CloudPane(QWidget):
             selector.currentIndexChanged.connect(self.language_options_changed)
         self.answer_level.currentIndexChanged.connect(self.update_answer_level)
         self.provider.currentIndexChanged.connect(self.provider_changed)
-        self.speech_model.currentIndexChanged.connect(self.speech_changed)
         self.speech_key.textChanged.connect(self.controls)
         self.model.currentTextChanged.connect(self.model_changed)
         self.workspace.textChanged.connect(self.api_input_changed)
@@ -474,10 +473,11 @@ class CloudPane(QWidget):
         settings.addLayout(source)
         settings.addWidget(plain_label("系统音频会包含同一播放设备上的其他声音。", "muted"))
         settings.addWidget(self.rule())
-        settings.addWidget(plain_label("语音识别", "sectionTitle"))
-        settings.addWidget(self.speech_model)
-        settings.addWidget(self.speech_help)
-        settings.addWidget(self.speech_key_row)
+        speech_row = QHBoxLayout()
+        self.speech_summary = plain_label("", "muted")
+        speech_row.addWidget(self.speech_summary, 1)
+        speech_row.addWidget(self.speech_settings)
+        settings.addLayout(speech_row)
         settings.addWidget(self.rule())
         settings.addWidget(plain_label("AI 回答与翻译", "sectionTitle"))
         key_row = QHBoxLayout()
@@ -600,7 +600,16 @@ class CloudPane(QWidget):
         return PROVIDERS[self.provider.currentData()]
 
     def selected_speech(self):
-        return SPEECH_MODELS.get(self.speech_model.currentData())
+        return SPEECH_MODELS.get(self.speech_code)
+
+    def set_speech_model(self, code):
+        if code != self.speech_code:
+            self.speech_code = code
+            self.speech_changed()
+
+    def can_configure_speech(self):
+        return (self.preferences_ready and self.state == "idle" and not self.closing
+                and all(worker is None for worker in (self.worker, self.credential_worker, self.settings_worker)))
 
     def asr_key(self):
         speech = self.selected_speech()
@@ -763,7 +772,7 @@ class CloudPane(QWidget):
         has_translation = (translation and translation != language) or any(row.translated for row in self.rows.values())
         self.history.setColumnHidden(1, not has_translation)
         for widget in (self.source, self.refresh, self.provider, self.model, self.workspace, self.key,
-                       self.vault_button, self.auto_answer, self.speech_model, self.speech_key,
+                       self.vault_button, self.auto_answer, self.speech_key,
                        self.speech_vault_button):
             widget.setEnabled(configurable)
         self.manage_facts.setEnabled(configurable and self.state == "idle" and self.preferences_ready)
@@ -785,7 +794,12 @@ class CloudPane(QWidget):
             asr_issue = f"{speech.label} 不支持当前面试语言。"
             help_text = asr_issue
         elif speech.provider is None:
-            help_text = "音频在本机转写，需自行安装本地组件和模型。"
+            variant = MANAGED_MODELS.get(self.speech_code)
+            if variant and not model_available(models_directory(self.speech_models_dir), variant):
+                asr_issue = "请在「语音识别」页下载模型。"
+            help_text = asr_issue or "音频在本机转写。"
+            if variant is None:
+                help_text = "音频在本机转写，需自行安装 Whisper 组件和模型。"
         else:
             if not self.asr_key():
                 asr_issue = f"请填写 {speech.provider.label} 的 API Key。"
@@ -795,6 +809,7 @@ class CloudPane(QWidget):
             else:
                 help_text = f"{mode_hint} 使用 {speech.provider.label} 的 Key。"
         self.speech_help.setText(help_text)
+        self.speech_summary.setText(speech.label if speech else "请选择语音识别模型")
         ready = bool(self.source.currentData() and self.api_key() and endpoint_valid and not asr_issue)
         can_start = (idle and ready and self.capture_available and not self.personal_busy
                      and self.state in {"idle", "paused"})
@@ -812,6 +827,7 @@ class CloudPane(QWidget):
         self.copy.setEnabled(bool(row and row.answer))
         self.latest.setEnabled(bool(self.rendered))
         self.refresh_status()
+        self.speech_settings_changed.emit()
 
     def update_start_notice(self, speech, provider, language, asr_issue):
         tip = [asr_issue] if asr_issue else []
@@ -887,9 +903,10 @@ class CloudPane(QWidget):
                                  facts=self.approved_facts, personal_info=self.approved_personal,
                                  provider=self.selected_provider(), answer_level=self.answer_level.currentData(),
                                  model=self.selected_model(), workspace=self.workspace.text().strip(),
-                                 language=self.selected_language(), speech_model=self.speech_model.currentData(),
+                                 language=self.selected_language(), speech_model=self.speech_code,
                                  speech_key=self.asr_key(), translation_language=self.translation_language.currentData(),
-                                 answer_language=self.answer_language.currentData())
+                                 answer_language=self.answer_language.currentData(),
+                                 speech_models_dir=self.speech_models_dir)
         self.worker.status.connect(self.set_status)
         self.worker.failure.connect(self.set_session_failure)
         self.worker.partial_transcript.connect(self.add_partial_transcript)
@@ -1158,8 +1175,8 @@ class CloudPane(QWidget):
                 speech_code = "openai"
             elif not getattr(sys, "frozen", False) and local_model_available():
                 speech_code = "local"
-        with QSignalBlocker(self.speech_model):
-            self.speech_model.setCurrentIndex(max(0, self.speech_model.findData(speech_code)))
+        self.speech_code = "" if speech_code == "local" and getattr(sys, "frozen", False) else speech_code
+        self.speech_models_dir = preferences.speech_models_dir
         self.auto_answer.setChecked(preferences.auto_answer)
         self.theme.setCurrentIndex(self.theme.findData(preferences.theme))
         self.answer_level.setCurrentIndex(self.answer_level.findData(preferences.answer_level))
@@ -1180,9 +1197,10 @@ class CloudPane(QWidget):
             tuple((code, self.model_choices[code]) for code in PROVIDERS if code in self.model_choices),
             self.workspace.text().strip(),
             self.selected_language(),
-            self.speech_model.currentData(),
+            self.speech_code,
             translation_language=self.translation_language.currentData(),
             answer_language=self.answer_language.currentData(),
+            speech_models_dir=self.speech_models_dir,
         )
         changed = preferences != self.preferences
         keys = tuple((provider, field.text().strip())

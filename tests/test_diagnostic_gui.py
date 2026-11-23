@@ -71,9 +71,9 @@ def test_diagnostics_require_consent_before_starting_capture(monkeypatch):
         assert cloud.key.text() == ""
         assert cloud.api_key() == "test-deepseek"
         assert cloud.auto_answer.isChecked()
-        assert cloud.speech_model.currentData() == "openai"
+        assert cloud.speech_code == "openai"
         assert "音频会发送至 OpenAI" in cloud.start.toolTip()
-        cloud.speech_model.setCurrentIndex(cloud.speech_model.findData("local"))
+        cloud.set_speech_model("local")
         assert "DeepSeek" in cloud.start.toolTip() and "音频在本机" in cloud.start.toolTip()
 
         cloud.session_id = 2
@@ -116,7 +116,7 @@ def test_live_start_is_ready_after_saving_settings_and_requires_an_explicit_clic
         wait_until(app, lambda: pane.provider.isEnabled() and window.diagnostic.scan is None)
         pane.provider.setCurrentIndex(pane.provider.findData("deepseek"))
         wait_until(app, lambda: pane.key.isEnabled())
-        pane.speech_model.setCurrentIndex(pane.speech_model.findData("local"))
+        pane.set_speech_model("local")
         pane.settings_toggle.setChecked(True)
         pane.source.setCurrentIndex(1)
         QTest.keyClicks(pane.key, "synthetic-key")

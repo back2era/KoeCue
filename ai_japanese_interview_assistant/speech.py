@@ -13,6 +13,7 @@ from websockets.asyncio.client import connect as websocket_connect
 from websockets.exceptions import InvalidStatus, WebSocketException
 
 from .config import DEEPSEEK, OPENAI, QWEN, Provider, REALTIME_MODEL
+from .local_models import MANAGED_MODELS
 from .transcription import LOCAL_PREVIEW_EVENT, RealtimeError
 
 
@@ -41,6 +42,7 @@ SPEECH_MODELS = {
     "qwen-3.0": SpeechModel("千问 Qwen-Audio 3.0 · 实时", QWEN, "qwen-audio-3.0-asr-flash-streaming", True),
     "deepseek": SpeechModel("DeepSeek · 停顿后转写", DEEPSEEK),
     "local": SpeechModel("本地 Whisper · 需自行安装", None),
+    **{code: SpeechModel(variant.label, None) for code, variant in MANAGED_MODELS.items()},
 }
 
 

@@ -42,7 +42,7 @@ def test_saving_personal_info_supplies_the_next_session_without_extra_controls(m
     try:
         pane = window.personal
         cloud = window.cloud
-        window.navigation.button(2).click()
+        window.navigation.button(3).click()
         assert window.tabs.currentWidget() is pane
         wait(app, lambda: pane.import_button.isEnabled() and window.cloud.key.isEnabled())
         assert not pane.findChildren(QCheckBox)

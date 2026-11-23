@@ -28,6 +28,7 @@ class Preferences:
     speech_model: str = ""
     translation_language: str | None = None
     answer_language: str | None = None
+    speech_models_dir: str = ""
 
 
 def _store():
@@ -61,6 +62,7 @@ def load_preferences():
         qwen_workspace=store.value("api/qwen_workspace", "", type=str).strip(),
         interview_language=language,
         speech_model=speech_model if speech_model in SPEECH_MODELS else "",
+        speech_models_dir=store.value("asr/models_dir", "", type=str),
         translation_language=translation if translation in TRANSLATION_LANGUAGES or translation == "" else default_translation,
         answer_language=answer if answer in INTERVIEW_LANGUAGES else language,
     )
@@ -83,6 +85,7 @@ def save_preferences(preferences):
     store.setValue("api/qwen_workspace", preferences.qwen_workspace)
     store.setValue("interview/language", preferences.interview_language)
     store.setValue("asr/model", preferences.speech_model)
+    store.setValue("asr/models_dir", preferences.speech_models_dir)
     translation = preferences.translation_language
     if translation is None:
         translation = DEFAULT_TRANSLATION_LANGUAGES[preferences.interview_language]

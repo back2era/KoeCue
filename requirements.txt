@@ -17,3 +17,5 @@ pywin32-ctypes==0.2.2
 jaraco.classes==3.2.1
 more-itertools==10.1.0
 pypdf==7.0.1
+sherpa-onnx==2.0.3
+sherpa-onnx-core==2.0.3

@@ -100,8 +100,11 @@ def verify(release, work):
     checks = json.loads(report.read_text(encoding="utf-8"))
     if (result.returncode != 0 or checks.get("version") != APP_VERSION
             or checks.get("bundled_whisper") is not False or checks.get("qt_platform") != "windows"
-            or checks.get("main_window_tabs") != 3
-            or checks.get("speech_models") != ["openai", "doubao", "qwen-3.1", "qwen-3.0", "deepseek"]):
+            or checks.get("main_window_tabs") != 4 or checks.get("local_sherpa") is not True
+            or checks.get("speech_models") != [
+                "sensevoice-int8", "sensevoice-fp32", "qwen3-asr-0.6b", "qwen3-asr-1.7b",
+                "qwen-3.1", "qwen-3.0", "openai", "doubao", "deepseek",
+            ]):
         raise SystemExit(f"Packaged application failed its check:\n{json.dumps(checks, ensure_ascii=False, indent=2)}")
     print(f"Package check: {json.dumps(checks, ensure_ascii=False)}")
 
@@ -132,11 +135,11 @@ def main():
         "--exclude-module", "pytest", "--exclude-module", "av", "--exclude-module", "faster_whisper",
         "--exclude-module", "ctranslate2", "--exclude-module", "onnxruntime",
         "--exclude-module", "huggingface_hub", "--exclude-module", "tokenizers",
-        "--copy-metadata", "keyring", str(ROOT / "launch.pyw"),
+        "--collect-binaries", "sherpa_onnx", "--copy-metadata", "keyring", str(ROOT / "launch.pyw"),
     ], cwd=ROOT, env=env, check=True)
     release = work / "release" / APP_NAME
-    if (release / "models").exists() or any(release.rglob("model.bin")):
-        raise SystemExit("The cloud release unexpectedly contains bundled model weights.")
+    if (release / "models").exists() or any(release.rglob("model.bin")) or any(release.rglob("*.onnx")):
+        raise SystemExit("The release unexpectedly contains bundled model weights.")
     for name in ("README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"):
         shutil.copy2(ROOT / name, release / name)
     shutil.copytree(ROOT / "docs" / "images", release / "docs" / "images")

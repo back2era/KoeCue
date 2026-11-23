@@ -13,6 +13,7 @@ from .audio import AudioBuffer, AudioError, capture, check_topology
 from .config import DEFAULT_INTERVIEW_LANGUAGE, DEFAULT_TRANSLATION_LANGUAGES, DEEPSEEK, OPENAI, QWEN
 from .interview import InterviewService
 from .local_asr import LocalAsrError, load_decoder, run_local_transcription
+from .local_models import MANAGED_MODELS, load_managed_decoder, models_directory
 from .personal import PersonalInfo
 from .services import TextService, client_for, error_message
 from .speech import DOUBAO, SPEECH_MODELS, run_deepseek, run_doubao, run_qwen
@@ -37,12 +38,15 @@ class LiveWorker(QThread):
     def __init__(self, generation, device, key, parent=None, *, session_id=0, auto_answer=False,
                  facts=(), personal_info=PersonalInfo(), provider=OPENAI, answer_level=DEFAULT_ANSWER_LEVEL,
                  model="", workspace="", language=DEFAULT_INTERVIEW_LANGUAGE,
-                 speech_model="openai", speech_key=None, translation_language=None, answer_language=None):
+                 speech_model="openai", speech_key=None, translation_language=None, answer_language=None,
+                 speech_models_dir=""):
         super().__init__(parent)
         self.generation = generation
         self.session_id = session_id
         self.device = device
         self.key = key
+        self.speech_code = speech_model
+        self.speech_models_dir = speech_models_dir
         self.speech = SPEECH_MODELS[speech_model]
         self.speech_key = key if speech_key is None and self.speech.provider is provider else speech_key or ""
         self.provider = provider
@@ -154,7 +158,13 @@ class LiveWorker(QThread):
         frames = self.audio_commands()
         if provider is None:
             self.status.emit("asr", "正在加载本地语音模型…")
-            decoder = await asyncio.to_thread(load_decoder, language=self.language)
+            if self.speech_code in MANAGED_MODELS:
+                decoder = await asyncio.to_thread(
+                    load_managed_decoder, self.speech_code, directory=models_directory(self.speech_models_dir),
+                    language=self.language,
+                )
+            else:
+                decoder = await asyncio.to_thread(load_decoder, language=self.language)
             if not self.isInterruptionRequested():
                 self.status.emit("asr", "本地转写已就绪，正在接收语音")
                 await run_local_transcription(

@@ -16,6 +16,7 @@ from .glass import (
     DEFAULT_THEME, BrandMark, GlassCanvas, GlassStyle, PageFade, application_icon, apply_theme, glass_panel, plain_label,
 )
 from .personal_gui import PersonalPane
+from .speech_gui import SpeechModelsPane
 from .windows_taskbar import register_process, register_window, unregister_window
 
 
@@ -40,7 +41,7 @@ class MainWindow(QMainWindow):
         nav_layout.setContentsMargins(4, 4, 4, 4)
         nav_layout.setSpacing(3)
         self.navigation = QButtonGroup(self)
-        for index, title in enumerate(("实时面试", "音频诊断", "个人信息")):
+        for index, title in enumerate(("实时面试", "语音识别", "音频诊断", "个人信息")):
             button = QPushButton(title)
             button.setProperty("nav", True)
             button.setCheckable(True)
@@ -56,6 +57,9 @@ class MainWindow(QMainWindow):
         self.cloud.theme_changed.connect(lambda theme_id: apply_theme(QApplication.instance(), theme_id))
         self.cloud.idle.connect(self.retry_close)
         self.cloud.idle.connect(self.sync_audio_controls)
+        self.speech = SpeechModelsPane(self.cloud, self)
+        self.speech.idle.connect(self.retry_close)
+        self.cloud.open_speech_settings.connect(lambda: self.tabs.setCurrentWidget(self.speech))
         self.personal = PersonalPane(self)
         self.personal.idle.connect(self.retry_close)
         self.personal.saved_changed.connect(self.cloud.set_saved_personal)
@@ -63,6 +67,7 @@ class MainWindow(QMainWindow):
         self.cloud.listening_state_changed.connect(self.personal.session_state)
         self.cloud.set_personal_busy(self.personal.worker is not None)
         self.tabs.addWidget(self.cloud)
+        self.tabs.addWidget(self.speech)
         self.tabs.addWidget(self.diagnostic)
         self.tabs.addWidget(self.personal)
         self.navigation.button(0).setChecked(True)
@@ -88,6 +93,8 @@ class MainWindow(QMainWindow):
         if current is not self.diagnostic and self.diagnostic.state != "idle":
             self.diagnostic.stop_capture()
         self.sync_audio_controls()
+        if current is self.speech:
+            self.speech.show_active()
         self.fade.play()
 
     def sync_audio_controls(self):
@@ -105,7 +112,8 @@ class MainWindow(QMainWindow):
         diagnostic_idle = self.diagnostic.shutdown()
         cloud_idle = self.cloud.shutdown()
         personal_idle = self.personal.shutdown()
-        if diagnostic_idle and cloud_idle and personal_idle:
+        speech_idle = self.speech.shutdown()
+        if diagnostic_idle and cloud_idle and personal_idle and speech_idle:
             if self.taskbar_handle is not None:
                 unregister_window(self.taskbar_handle)
                 self.taskbar_handle = None

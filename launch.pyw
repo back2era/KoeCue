@@ -14,6 +14,7 @@ def verify_installation(report):
     window = None
     try:
         from PySide6.QtWidgets import QApplication
+        from sherpa_onnx import OfflineRecognizer
         from ai_japanese_interview_assistant import cloud_gui
         from ai_japanese_interview_assistant.__main__ import MainWindow, configure_application
         from ai_japanese_interview_assistant.audio import list_devices
@@ -25,10 +26,11 @@ def verify_installation(report):
         window.show()
         app.processEvents()
         devices = list_devices()
-        speech = window.cloud.speech_model
+        speech_codes = [code for _, codes in window.speech.families for code in codes]
         result = {"version": APP_VERSION, "qt_platform": app.platformName(), "devices": len(devices),
                   "main_window_tabs": window.tabs.count(),
-                  "speech_models": [speech.itemData(i) for i in range(1, speech.count())],
+                  "speech_models": speech_codes,
+                  "local_sherpa": hasattr(OfflineRecognizer, "from_qwen3_asr"),
                   "bundled_whisper": find_spec("faster_whisper") is not None}
     except Exception:
         result = {"error": traceback.format_exc()}

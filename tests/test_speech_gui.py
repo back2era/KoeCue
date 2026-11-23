@@ -19,6 +19,7 @@ def test_opens_with_two_saved_services_and_reuses_key_when_they_match(tmp_path, 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     from PySide6.QtTest import QTest
+    from ai_japanese_interview_assistant.speech_gui import SpeechModelsPane
     from PySide6.QtWidgets import QApplication
     from ai_japanese_interview_assistant import cloud_gui
     from ai_japanese_interview_assistant.audio import Device
@@ -44,9 +45,12 @@ def test_opens_with_two_saved_services_and_reuses_key_when_they_match(tmp_path, 
     app = QApplication.instance() or QApplication([])
     save_preferences(Preferences(provider="deepseek", interview_language="zh", speech_model="doubao"))
     pane = cloud_gui.CloudPane()
+    speech = SpeechModelsPane(pane)
     pane.show()
     try:
         wait(app, pane.key.isEnabled)
+        speech.show_active()
+        speech.show()
         pane.settings_toggle.setChecked(True)
         pane.source.setCurrentIndex(1)
         QTest.keyClicks(pane.key, "fixture-text-key")
@@ -77,16 +81,21 @@ def test_opens_with_two_saved_services_and_reuses_key_when_they_match(tmp_path, 
         wait(app, lambda: pane.shutdown())
     finally:
         pane.close()
+        speech.close()
 
     pane = cloud_gui.CloudPane()
+    speech = SpeechModelsPane(pane)
     pane.show()
     try:
         wait(app, pane.start.isEnabled)
-        assert pane.speech_model.currentData() == "doubao"
+        speech.show_active()
+        speech.show()
+        assert pane.speech_code == "doubao"
         assert pane.speech_key.text() == "fixture-speech-key"
         pane.interview_language.setCurrentIndex(pane.interview_language.findData("ja"))
         assert not pane.start.isEnabled()
-        pane.speech_model.setCurrentIndex(pane.speech_model.findData("deepseek"))
+        pane.set_speech_model("deepseek")
+        speech.show_active()
         wait(app, pane.start.isEnabled)
         pane.settings_toggle.setChecked(True)
         assert not pane.speech_key.isVisible()
@@ -95,6 +104,7 @@ def test_opens_with_two_saved_services_and_reuses_key_when_they_match(tmp_path, 
     finally:
         wait(app, pane.shutdown)
         pane.close()
+        speech.close()
 
 @pytest.mark.parametrize("language,translation", [("ja", "zh"), ("zh", "")])
 def test_saved_interview_language_from_an_older_version_resolves_to_the_same_preset(
@@ -169,3 +179,85 @@ def test_language_preset_and_custom_languages_are_saved_and_history_keeps_its_la
     finally:
         wait(app, pane.shutdown)
         pane.close()
+
+
+def test_model_page_download_and_selection_persist(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from hashlib import sha256
+
+    from PySide6.QtWidgets import QApplication, QFileDialog
+    from ai_japanese_interview_assistant import cloud_gui, speech_gui
+    from ai_japanese_interview_assistant.__main__ import MainWindow
+    from ai_japanese_interview_assistant.audio import Device
+    from ai_japanese_interview_assistant.diagnostic import DeviceScan
+    from ai_japanese_interview_assistant.local_models import MANAGED_MODELS, ModelFile
+    from ai_japanese_interview_assistant.settings import load_preferences
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "fixture")
+    monkeypatch.setattr(cloud_gui, "credential", lambda *args: "")
+    monkeypatch.setattr(DeviceScan, "run", lambda scan: scan.result.emit([Device(0, "测试设备", True, 48000, 2)]))
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    window.show()
+    speech = window.speech
+    family = {name: i for i, (name, _) in enumerate(speech.families)}
+    code = "qwen3-asr-0.6b"
+    selected_dir = tmp_path / "custom-models"
+    selected_dir.mkdir()
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args: str(selected_dir))
+    monkeypatch.setitem(
+        MANAGED_MODELS, code, replace(MANAGED_MODELS[code], files=(ModelFile("test.bin", 4, sha256(b"test").hexdigest()),)),
+    )
+    downloads = []
+
+    def install(directory, variant, client, *, cancelled, progress):
+        downloads.append((directory, variant.code))
+        target = directory / code
+        target.mkdir()
+        (target / "test.bin").write_bytes(b"test")
+        progress(4)
+
+    monkeypatch.setattr(speech_gui, "download_model", install)
+    workers = []
+    monkeypatch.setattr(cloud_gui.LiveWorker, "start", lambda worker: workers.append(worker))
+    monkeypatch.setattr(cloud_gui.LiveWorker, "stop", lambda worker: worker.finished.emit())
+    try:
+        wait(app, window.cloud.can_configure_speech)
+        assert [window.navigation.button(i).text() for i in range(window.tabs.count())] == [
+            "实时面试", "语音识别", "音频诊断", "个人信息",
+        ]
+        window.cloud.settings_toggle.setChecked(True)
+        window.cloud.speech_settings.click()
+        assert window.tabs.currentWidget() is speech
+        speech.family_buttons.button(family["Qwen3-ASR"]).click()
+        assert speech.variants.count() == 2
+        assert "2.40 GB" in speech.variants.itemText(1)
+        assert not speech.use.isEnabled()
+        assert downloads == []
+        speech.choose_directory.click()
+        wait(app, window.cloud.can_configure_speech)
+        assert load_preferences().speech_models_dir == str(selected_dir)
+        speech.download.click()
+        wait(app, speech.use.isEnabled)
+        assert downloads == [(selected_dir, code)]
+        assert speech.state.text() == "已下载"
+        speech.use.click()
+        wait(app, window.cloud.can_configure_speech)
+        assert load_preferences().speech_model == code
+
+        window.navigation.button(0).click()
+        window.cloud.source.setCurrentIndex(1)
+        wait(app, window.cloud.start.isEnabled)
+        window.cloud.start.click()
+        worker, = workers
+        assert worker.speech_code == code and worker.speech_models_dir == str(selected_dir)
+        assert worker.speech_key == ""
+        window.navigation.button(1).click()
+        speech.family_buttons.button(family["OpenAI"]).click()
+        assert not speech.use.isEnabled()
+        window.cloud.stop_session()
+        wait(app, speech.use.isEnabled)
+    finally:
+        window.close()
+        wait(app, lambda: not window.isVisible())
