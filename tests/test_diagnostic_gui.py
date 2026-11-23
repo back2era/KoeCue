@@ -102,6 +102,7 @@ def test_live_start_is_ready_after_saving_settings_and_requires_an_explicit_clic
     from ai_japanese_interview_assistant.audio import Device
     from ai_japanese_interview_assistant.diagnostic import DeviceScan
     from ai_japanese_interview_assistant.live import LiveWorker
+    from ai_japanese_interview_assistant.transcription import TranscriptPart
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setattr(local_models, "local_model_available", lambda: True)
@@ -136,14 +137,19 @@ def test_live_start_is_ready_after_saving_settings_and_requires_an_explicit_clic
         wait_until(app, lambda: pane.settings_worker is None)
         assert starts == [(1, device)]
         assert pane.state == "active"
+        part = TranscriptPart("project", "フライバック電源について教えてください。", final=True)
+        pane.add_transcript(((pane.session_id, pane.generation, part.item_id), part))
         pane.pause.click()
         assert pane.start.text() == "恢复"
         assert not pane.status_detail.isVisible()
         pane.start.click()
         assert starts == [(1, device), (1, device)]
+        assert pane.worker.previous_transcript == (part.text,)
         pane.stop.click()
         assert not pane.status_detail.isVisible()
         assert pane.start.text() == "确认并开始"
+        pane.start.click()
+        assert starts[-1] == (2, device) and pane.worker.previous_transcript == ()
     finally:
         window.close()
         wait_until(app, lambda: not window.isVisible())
@@ -246,6 +252,20 @@ def test_answer_defaults_to_focus_readings_and_expands_without_changing_copy(mon
         assert app.clipboard().text() == f"{ja}\n\n{zh}"
         cloud.full_annotations.click()
         assert len(rendered[-1][1]) == 3
+        assert cloud.answer_body.font().bold() and cloud.answer_translation.font().bold()
+        cloud.show_answer_annotations.setChecked(False)
+        assert rendered[-1][1] == () and rendered[-1][2]["highlights"] == ()
+        assert cloud.full_annotations.isHidden()
+        cloud.show_answer_annotations.setChecked(True)
+        assert len(rendered[-1][1]) == 3
+
+        markdown = Answer("- **要件**を確認します。", "- 确认**需求**。")
+        cloud.rows[key].answer = markdown
+        cloud.render_answer()
+        assert rendered[-1][0] == "• 要件を確認します。"
+        assert cloud.answer_translation.text() == "• 确认需求。"
+        cloud.copy.click()
+        assert app.clipboard().text() == f"{markdown.ja}\n\n{markdown.zh}"
     finally:
         window.close()
         wait_until(app, lambda: not window.isVisible())
@@ -328,6 +348,7 @@ def test_answer_level_is_restored_after_restart():
         assert level.currentData() == "N2"
         assert {level.itemData(i) for i in range(level.count())} == {"N1", "N2", "N3", "N4", "N5"}
         level.setCurrentIndex(level.findData("N1"))
+        window.cloud.show_answer_annotations.setChecked(False)
     finally:
         window.close()
         wait_until(app, lambda: not window.isVisible())
@@ -337,6 +358,7 @@ def test_answer_level_is_restored_after_restart():
     try:
         wait_until(app, lambda: reopened.cloud.provider.isEnabled())
         assert reopened.cloud.answer_level.currentData() == "N1"
+        assert not reopened.cloud.show_answer_annotations.isChecked()
     finally:
         reopened.close()
         wait_until(app, lambda: not reopened.isVisible())

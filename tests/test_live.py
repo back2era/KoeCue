@@ -61,6 +61,34 @@ def test_english_transcript_dispatches_only_the_selected_translation(target, exp
     asyncio.run(exercise())
 
 
+def test_follow_up_uses_only_the_previous_final_transcripts_in_this_session(monkeypatch):
+    from ai_japanese_interview_assistant import live
+
+    async def exercise():
+        calls = []
+
+        class Replies:
+            async def suggest(self, text, *, recent_transcript, **kwargs):
+                calls.append((text, recent_transcript))
+                return Answer("", "好的。")
+
+        worker = LiveWorker(2, None, "test", language="zh", auto_answer=True,
+                            previous_transcript=("上一次暂停前谈到电源项目。",))
+        worker.interview = Replies()
+        for index, text in enumerate(("先介绍反激电源项目。", "这个项目怎么测试？")):
+            worker.on_event({"type": "conversation.item.input_audio_transcription.completed",
+                             "item_id": str(index), "transcript": text})
+        await asyncio.gather(*worker.jobs.values())
+
+        assert calls == [
+            ("先介绍反激电源项目。", ("上一次暂停前谈到电源项目。",)),
+            ("这个项目怎么测试？", ("上一次暂停前谈到电源项目。", "先介绍反激电源项目。")),
+        ]
+
+    monkeypatch.setattr(live, "record", lambda *args: None)
+    asyncio.run(exercise())
+
+
 def test_revoking_personal_info_cancels_a_scoped_answer():
     async def exercise():
         entered = asyncio.Event()
@@ -146,6 +174,31 @@ def test_automatic_suggestion_waits_for_capacity_and_runs_without_clicking(monke
         await asyncio.wait_for(answered.wait(), 1)
         assert [item[1] for item in received if item[1]] == [completed]
 
+    asyncio.run(exercise())
+
+
+def test_annotations_disabled_skips_the_model_call(monkeypatch):
+    from ai_japanese_interview_assistant import live
+
+    async def exercise():
+        plain = Answer("実装します。", "我会实现。")
+
+        class Replies:
+            async def suggest(self, *args, **kwargs):
+                return plain
+
+            async def annotate_answer(self, answer):
+                pytest.fail("annotations were disabled")
+
+        worker = LiveWorker(1, None, "test", show_answer_annotations=False)
+        worker.interview = Replies()
+        answers = []
+        worker.answer.connect(lambda key, answer, *_: answers.append(answer) if answer else None)
+        worker.start_answer((0, 1, "sample"), "どうしますか。")
+        await asyncio.gather(*worker.jobs.values())
+        assert answers == [plain]
+
+    monkeypatch.setattr(live, "record", lambda *args: None)
     asyncio.run(exercise())
 
 

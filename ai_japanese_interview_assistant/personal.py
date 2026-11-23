@@ -298,6 +298,8 @@ _GENERIC_TOPIC_WORDS = {
     "question", "questions", "project", "projects", "role", "technical", "vs",
 }
 _EXCERPT_BREAKS = re.compile(r"(?<=[。！？!?])\s*|(?<=\.)\s+")
+_YEAR_MONTH = r"(?:19|20)\d{2}(?:[-./](?:0?[1-9]|1[0-2])\b|年(?:\d{1,2}月)?)?"
+_DATE_RANGE = re.compile(rf"(?<!\d){_YEAR_MONTH}\s*[-–—~～至]\s*{_YEAR_MONTH}(?!\d)")
 _CONTACT_DETAIL = re.compile(
     r"@\S+\.\S+|(?<!\d)\+?\d(?:[ ()\-.]*\d){9,}(?!\d)"
     r"|^\s*(?:address|e-?mail|phone|mobile|tel|住所|地址|電話|电话|連絡先|联系方式)\s*[:：]",
@@ -344,7 +346,7 @@ def _excerpt_candidates(source):
             continue
         if section == "private" or not normalized.strip():
             continue
-        if not _CONTACT_DETAIL.search(normalized):
+        if not _CONTACT_DETAIL.search(_DATE_RANGE.sub(" ", normalized)):
             for sentence in _EXCERPT_BREAKS.split(line):
                 excerpt = sentence.strip()
                 if excerpt and len(excerpt) <= MAX_EXCERPT:
@@ -352,7 +354,34 @@ def _excerpt_candidates(source):
         lines_left = max(0, lines_left - 1)
 
 
-def select_excerpts(info: PersonalInfo, categories, question: str, *, topic_only=False) -> tuple[str, ...]:
+_EDUCATION_REQUEST = re.compile(
+    r"自己紹介(?:を)?(?:お願い|して|お聞かせ)|学歴|専攻|簡単に自己紹介"
+    r"|(?:自我介绍|自我介紹)|学历|學歷|毕业于哪|畢業於哪|(?:哪个|哪所|哪間)(?:学校|學校|大学|大學|学院|學院)"
+    r"|你的.{0,8}(?:专业|專業)|tell me (?:a little )?about yourself|introduce yourself"
+    r"|your (?:school|college|university|education|educational background|major)|what did you (?:study|major in)",
+    re.IGNORECASE,
+)
+_SCHOOL = re.compile(r"大学|大學|学院|學院|学校|學校|高専|\b(?:university|college|institute of technology|school)\b")
+_MAJOR = re.compile(
+    r"専攻|专业|專業|学科|学部|\b(?:major|department|field of study)\b"
+    r"|(?:工程|工学|科学|技术|engineering|informatics|science)(?:[\s（(]|$)"
+)
+
+
+def asks_about_education(question):
+    return bool(_EDUCATION_REQUEST.search(unicodedata.normalize("NFKC", question)))
+
+
+def _education_fields(text, section):
+    fields = set()
+    if _SCHOOL.search(text):
+        fields.add("school")
+    if _MAJOR.search(text) and (section == "education" or not fields or re.search(r"専攻|专业|專業|学科|工程|工学", text)):
+        fields.add("major")
+    return fields
+
+
+def select_excerpts(info: PersonalInfo, categories, question: str, *, topic_only=False, education_first=False) -> tuple[str, ...]:
     """Select at most two relevant exact slices of the stored background or resume."""
     categories = set(categories)
     category_terms = {term for category in categories for term in _CATEGORY_TERMS.get(category, ())}
@@ -372,6 +401,7 @@ def select_excerpts(info: PersonalInfo, categories, question: str, *, topic_only
 
     ranked = {}
     scoped = {}
+    education = {}
     for source in (info.background[:MAX_BACKGROUND], info.resume[:MAX_RESUME]):
         for excerpt, section in _excerpt_candidates(source):
             normalized = unicodedata.normalize("NFKC", excerpt).casefold()
@@ -380,9 +410,23 @@ def select_excerpts(info: PersonalInfo, categories, question: str, *, topic_only
             subject_matches = sum(any(_matches(term, normalized, words) for term in terms) for terms in subjects)
             overlap = len(words & question_words) + len(_han_pairs(normalized) & question_han)
             score = int(category_match) + 3 * subject_matches + 2 * overlap
+            if education_first and not topic_only and (section == "education" or category_match):
+                fields = _education_fields(normalized, section)
+                if fields:
+                    education[excerpt] = fields
+                    score += 8 * len(fields) + 2 * (section == "education")
             if score:
                 ranked[excerpt] = max(score, ranked.get(excerpt, 0))
                 if topic_only and any(any(_matches(term, normalized, words) for term in terms) for terms in scope):
                     scoped[excerpt] = ranked[excerpt]
     results = scoped or ranked
-    return tuple(sorted(results, key=results.get, reverse=True)[:2])
+    ordered = sorted(results, key=results.get, reverse=True)
+    if education:
+        first = next(excerpt for excerpt in ordered if excerpt in education)
+        ordered.remove(first)
+        missing = {"school", "major"} - education[first]
+        second = next((excerpt for excerpt in ordered if education.get(excerpt, set()) & missing), None)
+        if second:
+            return first, second
+        ordered.insert(0, first)
+    return tuple(ordered[:2])

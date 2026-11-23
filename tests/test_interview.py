@@ -38,6 +38,54 @@ def test_automatic_mode_suggests_an_acknowledgement_for_a_statement():
     assert json.loads(text.calls[1][1])["facts"] == []
 
 
+def test_project_follow_up_selects_resume_evidence_and_sends_previous_turn():
+    previous = "请介绍你的无线测量项目。"
+    question = "这个项目具体怎么测量？"
+    source = "我用频谱仪测量无线信号。"
+    text = ScriptedText([
+        {"question": True, "personal": True, "categories": ["project"]},
+        {"before_zh": "", "after_zh": "", "fact_ids": [], "excerpt_ids": ["excerpt_2"],
+         "excerpt_zh": [source]},
+        {"safe": True},
+    ])
+    resume = "项目经历\n电机控制\n我编写了控制程序。\n\n项目经历\n无线测量项目\n" + source
+    answer = asyncio.run(InterviewService(text, language="zh").suggest(
+        question, automatic=True, personal_info=PersonalInfo(resume=resume), recent_transcript=(previous,),
+    ))
+
+    assert answer.zh == source
+    assert json.loads(text.calls[0][1])["recent_transcript"] == [previous]
+    draft = json.loads(text.calls[1][1])
+    assert draft["question"] == question and draft["recent_transcript"] == [previous]
+    assert [entry["text"] for entry in draft["excerpts"]] == ["无线测量项目", source]
+    verification = json.loads(text.calls[2][1])
+    assert verification["excerpts"] == [{"source": source, "zh": source}]
+    assert verification["recent_transcript"] == [previous]
+
+
+def test_self_introduction_retries_with_available_school_and_major_even_if_classifier_misses_education():
+    school, major = "示例大学", "电子信息工程"
+    school_line = f"2022.09 - 2026.06 {school}"
+    resume = f"联系方式\nstudent@example.test\n教育背景\n{school_line}\n{major}"
+    template = {"before_zh": "我在【学校名】学习【专业】。", "after_zh": "", "fact_ids": [],
+                "excerpt_ids": [], "excerpt_zh": []}
+    grounded = dict(template, before_zh="", excerpt_ids=["excerpt_1", "excerpt_2"],
+                    excerpt_zh=[f"我就读于{school}。", f"我的专业是{major}。"])
+    text = ScriptedText([
+        {"question": True, "personal": False, "categories": []}, template, {"safe": True},
+        grounded, {"safe": True},
+    ])
+
+    answer = asyncio.run(InterviewService(text, language="zh").suggest(
+        "请先做一下自我介绍。", automatic=True, personal_info=PersonalInfo(resume=resume),
+    ))
+
+    assert answer.zh == f"我就读于{school}。\n我的专业是{major}。"
+    for index in (1, 3):
+        excerpts = json.loads(text.calls[index][1])["excerpts"]
+        assert [excerpt["text"] for excerpt in excerpts] == [school_line, major]
+
+
 def test_question_yields_bilingual_answer_after_check():
     text = ScriptedText([
         {"before_ja": "まず、要件を確認します。", "before_zh": "首先确认需求。",
@@ -400,6 +448,17 @@ def test_invalid_japanese_level_stops_before_a_provider_request():
         asyncio.run(InterviewService(text).suggest("まず何をしますか。", automatic=True, level="N7"))
 
     assert text.calls == []
+
+
+def test_markdown_answer_annotations_match_the_rendered_bullets():
+    raw = "- **実装**します。\n- `PWM` を確認します。"
+    text = ScriptedText([{"terms": ["実装"], "labels": ["じっそう"], "contexts": [""], "focus_terms": []}])
+
+    answer = asyncio.run(InterviewService(text).annotate_answer(Answer(raw, "")))
+
+    assert text.calls == [("annotate_answer", "• 実装します。\n• PWM を確認します。")]
+    assert answer.ja == raw
+    assert [(span.start, span.end) for span in answer.annotations] == [(2, 4)]
 
 
 def test_answer_annotations_use_character_offsets_and_preserve_the_bilingual_answer():

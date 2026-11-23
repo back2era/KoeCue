@@ -37,6 +37,19 @@ class TranscriptBook:
     def latest_item_id(self):
         return self._order[-1] if self._order else None
 
+    def preceding_final_text(self, item_id, limit):
+        if item_id not in self._parts:
+            return ()
+        index = self._order.index(item_id)
+        texts = []
+        for previous in reversed(self._order[:index]):
+            part = self._parts[previous]
+            if part.final and part.text:
+                texts.append(part.text)
+                if len(texts) == limit:
+                    break
+        return tuple(reversed(texts))
+
     def apply(self, event):
         kind = event.get("type", "")
         item = event.get("item_id")

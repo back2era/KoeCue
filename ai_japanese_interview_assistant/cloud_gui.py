@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from .answer_display import compact_annotations, paragraph_breaks
+from .answer_display import compact_annotations, display_markdown, paragraph_breaks
 from .answer_format import ANSWER_LEVELS, DEFAULT_ANSWER_LEVEL
 from .diagnostic import DeviceScan
 from .config import (
@@ -19,7 +19,7 @@ from .config import (
 )
 from .credentials import credential
 from .glass import DEFAULT_THEME, THEMES, GlassComboBox, GlassDialog, glass_panel, plain_label
-from .interview import Answer
+from .interview import RECENT_TURN_LIMIT, Answer
 from .live import ANSWER_PENDING, LiveWorker
 from .local_models import MANAGED_MODELS, model_installation, models_directory
 from .personal import PersonalInfo
@@ -212,6 +212,9 @@ class CloudPane(QWidget):
         speech_key_layout.addWidget(self.speech_key, 1)
         speech_key_layout.addWidget(self.speech_vault_button)
         self.speech_key_row.hide()
+        self.show_answer_annotations = QCheckBox("显示日语回答标注")
+        self.show_answer_annotations.setChecked(True)
+        self.show_answer_annotations.setToolTip("关闭后隐藏平假名、英文原词和重点颜色。")
         self.auto_answer = QCheckBox("自动为面试发言生成建议")
         self.auto_answer.setChecked(True)
         self.manage_facts = QPushButton("管理已核对事实")
@@ -253,6 +256,9 @@ class CloudPane(QWidget):
         self.translation_state = plain_label("", "captionState")
         self.answer_body = RubyLabel()
         self.answer_translation = plain_label("", "answerTranslation")
+        translation_font = self.answer_translation.font()
+        translation_font.setBold(True)
+        self.answer_translation.setFont(translation_font)
         self.answer_translation.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.answer_translation_rule = self.rule()
         self.full_annotations = QPushButton("全部标注")
@@ -300,6 +306,7 @@ class CloudPane(QWidget):
         self.suggest.clicked.connect(self.request_answer)
         self.copy.clicked.connect(self.copy_answer)
         self.full_annotations.toggled.connect(self.render_answer)
+        self.show_answer_annotations.toggled.connect(self.update_answer_annotations)
         self.history.itemSelectionChanged.connect(self.select_row)
         self.history.itemClicked.connect(self.show_captions)
         self.settings_toggle.toggled.connect(self.toggle_settings)
@@ -459,6 +466,7 @@ class CloudPane(QWidget):
         answer_options.addWidget(self.auto_answer, 1)
         answer_options.addWidget(self.manage_facts)
         option_layout.addLayout(answer_options)
+        option_layout.addWidget(self.show_answer_annotations)
         content_layout.addWidget(options)
         card = glass_panel()
         settings = QVBoxLayout(card)
@@ -836,7 +844,8 @@ class CloudPane(QWidget):
             )
             audio = f"音频会发送至 {speech_target}。" if speech.provider else "音频在本机转写。"
             tip.extend(("点此确认已取得必要同意。", audio,
-                        f"{INTERVIEW_LANGUAGES[language]}文字可发送至 {provider.label}。"))
+                        f"{INTERVIEW_LANGUAGES[language]}文字可发送至 {provider.label}。",
+                        "回答建议会参考本次会话最近三段转写。"))
             if has_profile:
                 tip.append(f"生成回答时会向 {provider.label} 发送相关面试资料。")
         self.settings_route.setVisible(speech is not None)
@@ -880,6 +889,15 @@ class CloudPane(QWidget):
             self.status_detail.setAccessibleDescription(message)
         self.status_detail.setVisible(self.session_failure is not None)
 
+    def recent_transcript(self, *, before=None):
+        turns = []
+        for key, row in self.rows.items():
+            if key == before:
+                break
+            if key[0] == self.session_id and row.finalized and row.transcript:
+                turns.append(row.transcript)
+        return tuple(turns[-RECENT_TURN_LIMIT:])
+
     def start_session(self):
         if not self.start.isEnabled():
             return
@@ -902,7 +920,9 @@ class CloudPane(QWidget):
                                  language=self.selected_language(), speech_model=self.speech_code,
                                  speech_key=self.asr_key(), translation_language=self.translation_language.currentData(),
                                  answer_language=self.answer_language.currentData(),
-                                 speech_models_dir=self.speech_models_dir)
+                                 speech_models_dir=self.speech_models_dir,
+                                 show_answer_annotations=self.show_answer_annotations.isChecked(),
+                                 previous_transcript=self.recent_transcript())
         self.worker.status.connect(self.set_status)
         self.worker.failure.connect(self.set_session_failure)
         self.worker.partial_transcript.connect(self.add_partial_transcript)
@@ -917,6 +937,14 @@ class CloudPane(QWidget):
     def update_answer_level(self):
         if self.worker is not None:
             self.worker.answer_level = self.answer_level.currentData()
+
+    def update_answer_annotations(self, enabled):
+        if self.worker is not None:
+            self.worker.show_answer_annotations = enabled
+        if not enabled:
+            with QSignalBlocker(self.full_annotations):
+                self.full_annotations.setChecked(False)
+        self.render_answer()
 
     def set_status(self, service, value):
         if self.state == "active":
@@ -1056,7 +1084,7 @@ class CloudPane(QWidget):
     def request_answer(self):
         key, row = self.current_row()
         if self.worker is not None and self.can_send_row(key) and row and row.finalized and row.transcript:
-            self.worker.dispatch(self.worker.start_answer, key, row.transcript)
+            self.worker.dispatch(self.worker.start_answer, key, row.transcript, False, self.recent_transcript(before=key))
 
     def copy_answer(self):
         _, row = self.current_row()
@@ -1176,6 +1204,7 @@ class CloudPane(QWidget):
         self.auto_answer.setChecked(preferences.auto_answer)
         self.theme.setCurrentIndex(self.theme.findData(preferences.theme))
         self.answer_level.setCurrentIndex(self.answer_level.findData(preferences.answer_level))
+        self.show_answer_annotations.setChecked(preferences.show_answer_annotations)
         recognition = preferences.interview_language
         translation = preferences.translation_language
         self.set_languages(
@@ -1197,6 +1226,7 @@ class CloudPane(QWidget):
             translation_language=self.translation_language.currentData(),
             answer_language=self.answer_language.currentData(),
             speech_models_dir=self.speech_models_dir,
+            show_answer_annotations=self.show_answer_annotations.isChecked(),
         )
         changed = preferences != self.preferences
         keys = tuple((provider, field.text().strip())
@@ -1317,8 +1347,8 @@ class CloudPane(QWidget):
         _, row = self.current_row()
         answer = row.answer if row else None
         language = row.answer_language if row else self.answer_language.currentData()
-        main = getattr(answer, language) if answer else ""
-        if answer and language == "ja":
+        main = display_markdown(getattr(answer, language)) if answer else ""
+        if answer and language == "ja" and self.show_answer_annotations.isChecked():
             compact = compact_annotations(main, answer.annotations, answer.highlights)
             expanded = self.full_annotations.isChecked()
             self.full_annotations.setVisible(len(compact) < len(answer.annotations))
@@ -1329,7 +1359,7 @@ class CloudPane(QWidget):
             )
         elif answer:
             self.full_annotations.hide()
-            self.answer_body.set_answer(main, paragraph_breaks=paragraph_breaks(main))
+            self.answer_body.set_answer(main, highlights=(), paragraph_breaks=paragraph_breaks(main))
         else:
             self.full_annotations.hide()
             name = INTERVIEW_LANGUAGES[language]
@@ -1337,7 +1367,7 @@ class CloudPane(QWidget):
                            else f"选中字幕后可生成{name}参考回答。")
             self.answer_body.set_answer(placeholder)
         translation = getattr(answer, row.translation_language, "") if answer and row.translation_language != language else ""
-        self.answer_translation.setText(translation)
+        self.answer_translation.setText(display_markdown(translation))
         self.answer_translation_rule.setVisible(bool(translation))
         self.answer_translation.setVisible(bool(translation))
         answer_status = row.answer_status if row else ""

@@ -29,6 +29,7 @@ class Preferences:
     translation_language: str | None = None
     answer_language: str | None = None
     speech_models_dir: str = ""
+    show_answer_annotations: bool = True
 
 
 def _store():
@@ -63,6 +64,7 @@ def load_preferences():
         interview_language=language,
         speech_model=speech_model if speech_model in SPEECH_MODELS else "",
         speech_models_dir=store.value("asr/models_dir", "", type=str),
+        show_answer_annotations=store.value("answer/annotations", True, type=bool),
         translation_language=translation if translation in TRANSLATION_LANGUAGES or translation == "" else default_translation,
         answer_language=answer if answer in INTERVIEW_LANGUAGES else language,
     )
@@ -79,6 +81,7 @@ def save_preferences(preferences):
     store.setValue("auto_answer", preferences.auto_answer)
     store.setValue("appearance/theme", preferences.theme)
     store.setValue("answer/level", preferences.answer_level)
+    store.setValue("answer/annotations", preferences.show_answer_annotations)
     models = dict(preferences.model_choices)
     for code in PROVIDERS:
         store.setValue(f"api/models/{code}", models.get(code, ""))

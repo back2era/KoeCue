@@ -185,6 +185,7 @@ class RubyLabel(QLabel):
         self.setTextInteractionFlags(_SELECTABLE)
         font = self.font()
         font.setPixelSize(17)
+        font.setBold(True)
         self.setFont(font)
 
     def set_answer(
@@ -229,6 +230,7 @@ class RubyLabel(QLabel):
         strong = QFont(base)
         strong.setBold(True)
         ruby = QFont(base)
+        ruby.setBold(False)
         ruby.setPixelSize(max(8, round(base.pixelSize() * 0.65)))
         return base, strong, ruby
 

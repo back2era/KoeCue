@@ -11,7 +11,7 @@ from PySide6.QtCore import QThread, Signal
 from .answer_format import DEFAULT_ANSWER_LEVEL
 from .audio import AudioBuffer, AudioError, capture, check_topology
 from .config import DEFAULT_INTERVIEW_LANGUAGE, DEFAULT_TRANSLATION_LANGUAGES, DEEPSEEK, OPENAI, QWEN
-from .interview import InterviewService
+from .interview import RECENT_TURN_LIMIT, InterviewService
 from .local_asr import LocalAsrError, run_local_transcription
 from .local_models import load_managed_decoder, models_directory
 from .personal import PersonalInfo
@@ -39,7 +39,7 @@ class LiveWorker(QThread):
                  facts=(), personal_info=PersonalInfo(), provider=OPENAI, answer_level=DEFAULT_ANSWER_LEVEL,
                  model="", workspace="", language=DEFAULT_INTERVIEW_LANGUAGE,
                  speech_model="openai", speech_key=None, translation_language=None, answer_language=None,
-                 speech_models_dir=""):
+                 speech_models_dir="", show_answer_annotations=True, previous_transcript=()):
         super().__init__(parent)
         self.generation = generation
         self.session_id = session_id
@@ -59,11 +59,13 @@ class LiveWorker(QThread):
         self.subtitle_language = self.translation_language if self.translation_language != language else ""
         self.auto_answer = auto_answer
         self.answer_level = answer_level
+        self.show_answer_annotations = show_answer_annotations
         self.facts = facts
         self.personal_info = personal_info
         self.sharing_revoked = Event()
         self.buffer = AudioBuffer()
         self.book = TranscriptBook()
+        self.previous_transcript = previous_transcript[-RECENT_TURN_LIMIT:]
         self.jobs = {}
         self.waiting_answers = {}
         self.loop = None
@@ -278,8 +280,7 @@ class LiveWorker(QThread):
         self.jobs.pop(job_id, None)
         if self.waiting_answers and not self.isInterruptionRequested() and len(self.jobs) < MAX_ACTIVE_TEXT_JOBS:
             row_id = next(iter(self.waiting_answers))
-            text, automatic = self.waiting_answers.pop(row_id)
-            self.start_job(("answer", row_id), self.suggest, row_id, text, automatic)
+            self.start_job(("answer", row_id), self.suggest, row_id, *self.waiting_answers.pop(row_id))
 
     async def translate(self, row_id, text):
         result = ""
@@ -306,19 +307,22 @@ class LiveWorker(QThread):
             self.translation.emit(row_id, result, "已翻译")
             self.status.emit("text", "文本 API 已连接")
 
-    def start_answer(self, row_id, text, automatic=False):
+    def start_answer(self, row_id, text, automatic=False, recent_transcript=None):
         job_id = ("answer", row_id)
         if self.isInterruptionRequested() or job_id in self.jobs or row_id in self.waiting_answers:
             return
+        if recent_transcript is None:
+            earlier = self.book.preceding_final_text(row_id[2], RECENT_TURN_LIMIT)
+            recent_transcript = (*self.previous_transcript, *earlier)[-RECENT_TURN_LIMIT:]
         if len(self.jobs) < MAX_ACTIVE_TEXT_JOBS and not self.waiting_answers:
-            self.start_job(job_id, self.suggest, row_id, text, automatic)
+            self.start_job(job_id, self.suggest, row_id, text, automatic, recent_transcript)
         elif len(self.waiting_answers) < MAX_WAITING_ANSWERS:
-            self.waiting_answers[row_id] = (text, automatic)
+            self.waiting_answers[row_id] = (text, automatic, recent_transcript)
             self.answer.emit(row_id, None, ANSWER_PENDING, False)
         else:
             self.answer.emit(row_id, None, "回答队列繁忙，可以重试", False)
 
-    async def suggest(self, row_id, text, automatic):
+    async def suggest(self, row_id, text, automatic, recent_transcript):
         facts, personal_info = self.facts, self.personal_info
         level = self.answer_level
         if self.sharing_revoked.is_set():
@@ -333,6 +337,7 @@ class LiveWorker(QThread):
         try:
             answer = await self.interview.suggest(
                 text, automatic=automatic, facts=facts, personal_info=personal_info, level=level, allowed=allowed,
+                recent_transcript=recent_transcript,
             )
             if not allowed():
                 raise asyncio.CancelledError
@@ -345,7 +350,7 @@ class LiveWorker(QThread):
             record(LogEvent.ANSWER_READY, monotonic() - started)
             self.answer.emit(row_id, answer, "建议已生成", scoped)
             self.status.emit("text", "文本 API 已连接")
-            if self.answer_language != "ja" or not allowed():
+            if self.answer_language != "ja" or not self.show_answer_annotations or not allowed():
                 return
             try:
                 annotated = await self.interview.annotate_answer(answer)
