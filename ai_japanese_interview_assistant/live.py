@@ -62,6 +62,8 @@ class LiveWorker(QThread):
         self.show_answer_annotations = show_answer_annotations
         self.facts = facts
         self.personal_info = personal_info
+        self.answer_preferences = personal_info.preferences
+        self.answer_translation_language = self.answer_preferences.translation_for(self.translation_language)
         self.sharing_revoked = Event()
         self.buffer = AudioBuffer()
         self.book = TranscriptBook()
@@ -136,7 +138,8 @@ class LiveWorker(QThread):
             self.service = TextService(client, self.provider, model=self.model, workspace=self.workspace)
             self.interview = InterviewService(self.service, language=self.language,
                                               answer_language=self.answer_language,
-                                              translation_language=self.translation_language)
+                                              translation_language=self.translation_language,
+                                              answer_preferences=self.answer_preferences)
             started = monotonic()
             try:
                 await self.transcribe(started)

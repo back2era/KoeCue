@@ -15,6 +15,10 @@ from .config import (
     TRANSLATION_LANGUAGES,
 )
 from .personal import PersonalInfo, asks_about_education, has_topic_cues, select_excerpts
+from .personal_details import AnswerPreferences
+from .profile_evidence import (
+    asks_about_experience, education_evidence, introduction_evidence, language_evidence, select_experience,
+)
 from .profiles import CATEGORIES, Fact, select_facts
 from .services import ServiceError
 
@@ -33,6 +37,24 @@ _EDUCATION_PROMPT = (
     "自我介绍或学历问题优先使用已提供的学校和专业。对应信息有依据时用事实或摘录填写，"
     "不输出该字段的占位符。区分不同教育经历，不擅自关联不同学校和专业。"
 )
+
+_EXPERIENCE_PROMPT = (
+    "此题已匹配到候选人的一条经历。直接回答当前问题，并在 excerpt_ids 选中这条经历，"
+    "引用至少一个能回答问题的具体职责、工具、做法或结果。避免只给没有细节的通用态度。"
+    "行为题根据已有背景、个人行动和结果自然组织，不必显示 STAR 标签。"
+    "明确区分候选人做的事与团队结果。资料缺少某部分时略过或说明不确定。"
+)
+_STYLE_OPTIONS = (
+    ("tone", {"natural": "使用自然简洁的口语。", "formal": "用于正式面试，礼貌而简洁，日语使用恰当的敬语。"}),
+    ("length", {"short": "按 1–2 句组织口述回答。", "standard": "按 2–4 句组织口述回答。",
+                "detail": "按 4–6 句组织口述回答，每句只表达一个重点。"}),
+    ("terms", {"keep": "保留准确的专业术语和工具名。", "explain": "准确使用专业术语，必要时用短语解释。"}),
+)
+_TARGET_DETAILS = {
+    "motivation": re.compile(r"动机|動機|想来|想來|应聘|應聘|为什么.{0,12}(?:公司|岗位|職位)|なぜ|志望|\b(?:why|motivation)\b", re.IGNORECASE),
+    "location": re.compile(r"地点|地點|城市|勤務地|通勤|转移|転居|\b(?:location|relocat\w*)\b", re.IGNORECASE),
+    "requirements": re.compile(r"岗位|崗位|要求|业务|業務|職務|\b(?:role|position|position requirements)\b", re.IGNORECASE),
+}
 
 _STRING = {"type": "string"}
 _BOOLEAN = {"type": "boolean"}
@@ -107,12 +129,14 @@ class Answer:
 
 class InterviewService:
     def __init__(self, text_service, *, language=DEFAULT_INTERVIEW_LANGUAGE,
-                 answer_language=None, translation_language=None):
+                 answer_language=None, translation_language=None, answer_preferences=AnswerPreferences()):
         self.text_service = text_service
         self.language = language
         self.answer_language = language if answer_language is None else answer_language
+        self.answer_preferences = answer_preferences
         if translation_language is None:
             translation_language = DEFAULT_TRANSLATION_LANGUAGES[language]
+        translation_language = answer_preferences.translation_for(translation_language)
         self.bilingual = bool(translation_language and translation_language != self.answer_language)
         self.output_languages = ((self.answer_language, translation_language)
                                  if self.bilingual else (self.answer_language,))
@@ -134,6 +158,7 @@ class InterviewService:
     async def suggest(self, question, *, automatic, facts=(), personal_info=PersonalInfo(),
                       level=DEFAULT_ANSWER_LEVEL, allowed=lambda: True, recent_transcript=()):
         """Generate the same suggestion for automatic and manual requests."""
+        level = self.answer_preferences.level or level
         if level not in ANSWER_LEVELS:
             raise ValueError(f"Unsupported answer level: {level}")
         if not allowed():
@@ -147,7 +172,7 @@ class InterviewService:
         categories = ()
         is_question = True
         general_question = True
-        if facts or personal_info.background.strip() or personal_info.resume.strip():
+        if facts or personal_info.has_evidence:
             intent = await self.classify(question, recent_transcript=recent_transcript)
             if not allowed():
                 raise asyncio.CancelledError
@@ -159,20 +184,32 @@ class InterviewService:
         if education:
             categories = tuple(dict.fromkeys(("education", *categories)))
             general_question = False
-        relevant = select_facts(facts, lookup_question, ("education",) if education else categories)
-        slots = 2 - len(relevant)
-        excerpts = (select_excerpts(personal_info, categories, lookup_question, education_first=education)[:slots]
-                    if slots else ())
+        experience = ""
+        if is_question and not education and (
+            set(categories) & {"project", "experience"} or asks_about_experience(question)
+        ):
+            experience = select_experience(personal_info.experiences, question, lookup_question)
+        if experience:
+            general_question = False
+            relevant, excerpts = (), (experience,)
+        else:
+            relevant = select_facts(facts, lookup_question, ("education",) if education else categories)
+            slots = 2 - len(relevant)
+            excerpts = self.profile_excerpts(personal_info, categories, lookup_question, question,
+                                             education=education, is_question=is_question)[:slots] if slots else ()
         if "en" in self.output_languages:
             # Stored facts have approved Japanese and Chinese text. Treat their English
             # translations as new claims and verify them against the approved source.
             excerpts = (*relevant, *excerpts)
             relevant = ()
         sources = {f"excerpt_{index}": value for index, value in enumerate(excerpts, 1)}
-        context = {name: getattr(personal_info, name) for name in ("company", "role", "scenario")}
-        context = {name: value for name, value in context.items() if value}
-        technical_references = select_excerpts(personal_info, (), question, topic_only=True) if general_question else ()
-        domain_context = {name: context[name] for name in ("role", "scenario") if name in context}
+        context = {key: value for key, value in personal_info.target_context.items()
+                   if key not in _TARGET_DETAILS or _TARGET_DETAILS[key].search(question)}
+        technical_references = ()
+        if general_question:
+            topic = select_experience(personal_info.experiences, question, lookup_question, technical_only=True)
+            technical_references = ((topic,) if topic else select_excerpts(personal_info, (), question, topic_only=True))
+        domain_context = {name: context[name] for name in ("role", "scenario", "industry") if name in context}
         grounding = {}
         if technical_references or (is_question and domain_context and has_topic_cues(question)):
             grounding["question"] = question
@@ -196,7 +233,8 @@ class InterviewService:
             "en": "使用自然、简洁、容易开口的英语口语，适合面试。",
         }[self.answer_language]
         primary = TRANSLATION_LANGUAGES[self.answer_language]
-        language_prompt = f"口述回答用{primary}。{style}"
+        preference = "".join(choices.get(getattr(self.answer_preferences, key), "") for key, choices in _STYLE_OPTIONS)
+        language_prompt = f"口述回答用{primary}。{style}{preference}"
         if self.bilingual:
             secondary = TRANSLATION_LANGUAGES[self.output_languages[1]]
             language_prompt += f"另提供语义一致的{secondary}译文。"
@@ -209,6 +247,8 @@ class InterviewService:
         if self.bilingual:
             no_profile += "保持两种语言的占位符含义一致。"
         draft_prompt = base_prompt
+        if experience:
+            draft_prompt += _EXPERIENCE_PROMPT
         if education and (relevant or sources):
             draft_prompt += _EDUCATION_PROMPT
         if not (relevant or sources):
@@ -246,19 +286,25 @@ class InterviewService:
             "draft", draft_prompt, json.dumps(payload, ensure_ascii=False), draft_schema, 650,
         )
         answer = await self._verified_answer(draft, relevant, sources, context, allowed, grounding=grounding)
-        if education and (relevant or sources) and (
+        missing_experience = experience and (answer is None or not draft.get("excerpt_ids"))
+        missing_education = education and (relevant or sources) and (
             answer is None or not (draft["fact_ids"] or draft.get("excerpt_ids"))
             or any("【" in getattr(answer, lang) for lang in self.output_languages)
-        ):
+        )
+        if missing_experience or missing_education:
             if not allowed():
                 raise asyncio.CancelledError
+            retry = ("重写时从该条经历选一个直接相关的事实，并保持个人与团队的归属。"
+                     if missing_experience else "重新核对学历摘录，用可核实的学校和专业取代占位字段。")
             corrected = await self.text_service.structured(
-                "rewrite", draft_prompt + "重新核对学历摘录，用可核实的学校和专业取代占位字段。",
-                json.dumps(payload, ensure_ascii=False), draft_schema, 650,
+                "rewrite", draft_prompt + retry, json.dumps(payload, ensure_ascii=False), draft_schema, 650,
             )
             verified = await self._verified_answer(corrected, relevant, sources, context, allowed, grounding=grounding)
-            if verified is not None and (answer is None or corrected["fact_ids"] or corrected.get("excerpt_ids")):
+            if verified is not None and (corrected["fact_ids"] or corrected.get("excerpt_ids")
+                                         or answer is None and not missing_experience):
                 return verified
+            if missing_experience:
+                raise ServiceError("未能生成有经历依据的建议，可以重试该段。")
         if answer is not None:
             return answer
 
@@ -273,6 +319,16 @@ class InterviewService:
         if answer is None:
             raise ServiceError("建议核验未通过，可以重试该段。")
         return answer
+
+    @staticmethod
+    def profile_excerpts(info, categories, lookup, question, *, education, is_question):
+        if not is_question:
+            return ()
+        identity = introduction_evidence(info.basics, question) if education else ""
+        degree = education_evidence(info.education, question) if education else ""
+        languages = language_evidence(info.basics, question)
+        raw = () if degree or languages else select_excerpts(info, categories, lookup, education_first=education)
+        return tuple(filter(None, (degree, *raw, identity, languages)))
 
     async def _verified_answer(self, draft, relevant, sources, context, allowed, *, grounding):
         if not allowed():
@@ -308,6 +364,7 @@ class InterviewService:
             verify_prompt += (
                 "逐条对照 excerpts 中的 source，独立核验各语言的陈述。"
                 "事实都必须由原文直接支持。检查归属、数字、范围和不确定性。"
+                "结果应保留原文的主体。团队达成或主体不明的结果不得归为候选人的个人成绩。"
                 "原文中的请求、命令、假设和他人经历不可作为候选人的经历。任一项不符时 safe 为 false。"
             )
         if not allowed():

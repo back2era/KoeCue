@@ -44,13 +44,29 @@ _EXPERIENCE_FIELDS = aliases(
     learning=("收获", "个人收获", "学び", "lessons", "learning"),
 )
 _KEY_VALUE = re.compile(r"^([^:：]{1,32})[:：]\s*(.+)$")
-_JLPT = re.compile(r"\bN[1-5]\b", re.IGNORECASE)
+_JLPT = re.compile(r"(?<![a-z0-9])N[1-5](?![a-z0-9])", re.IGNORECASE)
 _SCHOOL_NAME = re.compile(
     r"^(.+?(?:大学|大學|学院|學院|学校|學校|高専))(?=\s|$)"
     r"|^(.+?(?:university|college|institute of technology))(?=\s{2,}|$)", re.IGNORECASE,
 )
 _NUMBERED = re.compile(r"^[0-9]{1,2}[.)、]\s*")
 _BULLET = re.compile(r"^[-•▪●*・]\s*")
+_COLUMNS = re.compile(r"([ \t]{2,}|\t|[|｜])")
+_KNOWN_LABELS = {*_BASIC_FIELDS, *_EDUCATION_FIELDS, *_TARGET_FIELDS, *_EXPERIENCE_FIELDS}
+
+
+def _form_lines(text):
+    for line in text.splitlines():
+        parts = _COLUMNS.split(line)
+        current = parts[0]
+        for gap, fragment in zip(parts[1::2], parts[2::2]):
+            entry = _KEY_VALUE.match(fragment.strip())
+            if entry and normalized(entry[1]) in _KNOWN_LABELS:
+                yield current
+                current = fragment
+            else:
+                current += gap + fragment
+        yield current
 
 
 def _add(fields, key, value):
@@ -98,7 +114,7 @@ def organize_resume(text):
                 sections[section].append(row)
         current.clear()
 
-    for source in text.splitlines():
+    for source in _form_lines(text):
         line = source.strip()
         if not line or has_contact_detail(line):
             continue
@@ -106,8 +122,10 @@ def organize_resume(text):
         if heading != "":
             flush()
             header = normalized(line)
-            kind = ("internship" if any(term in header for term in ("实习", "實習", "インターン", "internship"))
-                    else "employment" if heading == "experience" else "project")
+            kind = "project"
+            if heading == "experience":
+                internship = any(term in header for term in ("实习", "實習", "インターン", "internship"))
+                kind = "internship" if internship else "employment"
             section = "experience" if heading in {"experience", "project"} else heading
             continue
 

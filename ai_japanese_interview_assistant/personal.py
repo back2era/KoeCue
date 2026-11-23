@@ -119,7 +119,9 @@ def _validate_personal(info):
                 if type(value) is not bool:
                     raise PersonalError("经历优先设置无效。")
                 continue
-            limit = MAX_DETAIL if name in LONG_FIELDS else MAX_FIELD
+            limit = MAX_SCENARIO if isinstance(row, Target) and name == "scenario" else (
+                MAX_DETAIL if name in LONG_FIELDS else MAX_FIELD
+            )
             if not isinstance(value, str) or len(value) > limit or _INVALID_TEXT.search(value):
                 raise PersonalError(f"单个资料字段最多可填写 {limit} 字，请检查较长的内容。")
         if isinstance(row, Experience) and row.kind not in EXPERIENCE_KINDS:
@@ -287,7 +289,10 @@ def _read_pdf(raw):
                 chunks = []
                 size = 0
                 for page in reader.pages:
-                    text = page.extract_text().strip()
+                    # Keep adjacent font runs on the same line, even with mixed CJK fonts.
+                    text = page.extract_text(extraction_mode="layout", layout_mode_space_vertically=False).strip()
+                    if not text:
+                        text = page.extract_text().strip()
                     if text:
                         size += len(text) + bool(chunks)
                         if size > MAX_RESUME:

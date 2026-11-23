@@ -61,17 +61,17 @@ def test_resume_autofill_keeps_team_results_and_individual_tasks_separate():
     from ai_japanese_interview_assistant.profile_autofill import organize_resume
 
     info = organize_resume(
-        "姓名：测试同学\n日语等级：JLPT N2\n联系方式\nstudent@example.test\n"
+        "姓名：测试同学    日语等级：JLPT N2\n联系方式\nstudent@example.test\n"
         "教育经历\n2022.09 - 2026.06 示例大学  电子信息工程\n"
-        "项目经历\n项目名称：开关电源设计\n个人职责：测量输出纹波\n使用工具：示波器、电子负载\n"
+        "项目与实习经历\n项目名称：开关电源设计\n个人职责：测量输出纹波\n使用工具：示波器、电子负载\n"
         "团队成果：样机通过联合验收\n"
         "实习经历\n公司：示例实验室\n岗位：测试实习生\n主要职责：记录电流数据"
     )
     assert (info.basics.name, info.basics.japanese_level) == ("测试同学", "N2")
     assert (info.education[0].school, info.education[0].major) == ("示例大学", "电子信息工程")
     project, internship = info.experiences
-    assert (project.title, project.responsibilities, project.tools, project.result) == (
-        "开关电源设计", "测量输出纹波", "示波器、电子负载", "团队成果：样机通过联合验收",
+    assert (project.kind, project.title, project.responsibilities, project.tools, project.result) == (
+        "project", "开关电源设计", "测量输出纹波", "示波器、电子负载", "团队成果：样机通过联合验收",
     )
     assert (internship.kind, internship.organization, internship.responsibilities) == ("internship", "示例实验室", "记录电流数据")
 

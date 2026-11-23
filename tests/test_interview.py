@@ -86,6 +86,85 @@ def test_self_introduction_retries_with_available_school_and_major_even_if_class
         assert [excerpt["text"] for excerpt in excerpts] == [school_line, major]
 
 
+def test_project_answer_reuses_grounded_card_when_first_draft_is_generic():
+    from ai_japanese_interview_assistant.personal_details import Experience
+
+    info = PersonalInfo(experiences=(
+        Experience(title="无线传感器", responsibilities="完善串口协议", tools="逻辑分析仪", priority=True),
+        Experience(title="反激电源", responsibilities="测量输出纹波", tools="示波器和电子负载",
+                   result="团队完成样机验收"),
+    ))
+    generic = {"before_zh": "我会认真分析。", "after_zh": "", "fact_ids": [],
+               "excerpt_ids": [], "excerpt_zh": []}
+    claim = "我用示波器和电子负载测量输出纹波。"
+    grounded = dict(generic, before_zh="", excerpt_ids=["excerpt_1"], excerpt_zh=[claim])
+    text = ScriptedText([
+        {"question": True, "personal": False, "categories": []},
+        generic, {"safe": True}, grounded, {"safe": True},
+    ])
+
+    answer = asyncio.run(InterviewService(text, language="zh").suggest(
+        "那你在这个项目里用了哪些工具？", automatic=True, personal_info=info,
+        recent_transcript=("请介绍你做的反激电源项目。",),
+    ))
+
+    assert answer.zh == claim
+    for index in (1, 3):
+        source, = json.loads(text.calls[index][1])["excerpts"]
+        assert "反激电源" in source["text"] and "示波器和电子负载" in source["text"]
+        assert "无线传感器" not in source["text"] and "样机验收" not in source["text"]
+    verification = json.loads(text.calls[-1][1])
+    assert verification["excerpts"][0]["zh"] == claim
+
+
+def test_matching_a_technical_topic_does_not_make_it_a_personal_experience():
+    from ai_japanese_interview_assistant.personal_details import Experience
+
+    source = Experience(title="反激电源评估", tools="示波器", responsibilities="负责输出纹波测量", result="团队通过样机验收")
+    draft = {"before_ja": "出力リップルを確認します。", "after_ja": "", "fact_ids": []}
+    text = ScriptedText([{"question": True, "personal": False, "categories": []}, draft, {"safe": True}])
+
+    asyncio.run(InterviewService(text, translation_language="").suggest(
+        "フライバック電源の原理を説明してください。", automatic=True,
+        personal_info=PersonalInfo(experiences=(source,)),
+    ))
+
+    payload = json.loads(text.calls[1][1])
+    assert "excerpts" not in payload
+    assert "反激电源评估" in payload["technical_references"][0]
+    assert "样机验收" not in payload["technical_references"][0]
+
+
+def test_hypothetical_project_question_does_not_attach_unrelated_experience():
+    from ai_japanese_interview_assistant.personal_details import Experience
+
+    info = PersonalInfo(experiences=(Experience(title="Motor test", responsibilities="Measured load"),))
+    draft = {"before_en": "I would define the priorities first.", "after_en": "", "fact_ids": []}
+    text = ScriptedText([{"question": True, "personal": False, "categories": []}, draft, {"safe": True}])
+    asyncio.run(InterviewService(text, language="en", translation_language="").suggest(
+        "How would you handle a project under a tight deadline?", automatic=True, personal_info=info,
+    ))
+    assert "excerpts" not in json.loads(text.calls[1][1])
+
+
+def test_selected_target_and_answer_preferences_reach_the_model():
+    from ai_japanese_interview_assistant.personal_details import AnswerPreferences, Target
+
+    preferences = AnswerPreferences(level="N3", length="short", tone="formal", translation="off")
+    info = PersonalInfo(targets=(Target(role="Unselected role"), Target(role="Circuit QA", motivation="Improve reliability")),
+                        active_target=1, preferences=preferences)
+    draft = {"before_ja": "はじめに波形を確認します。", "after_ja": "", "fact_ids": []}
+    text = ScriptedText([draft, {"safe": True}])
+
+    answer = asyncio.run(InterviewService(text, answer_preferences=preferences).suggest(
+        "なぜこの職種を志望したのですか。", automatic=True, personal_info=info,
+    ))
+
+    assert answer.ja == draft["before_ja"] and not answer.zh
+    assert "N3" in text.prompts["draft"] and "1–2" in text.prompts["draft"]
+    assert json.loads(text.calls[0][1])["context"] == {"role": "Circuit QA", "motivation": "Improve reliability"}
+
+
 def test_question_yields_bilingual_answer_after_check():
     text = ScriptedText([
         {"before_ja": "まず、要件を確認します。", "before_zh": "首先确认需求。",

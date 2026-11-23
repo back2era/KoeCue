@@ -24,6 +24,7 @@ def test_saving_personal_info_supplies_the_next_session_without_extra_controls(m
     from ai_japanese_interview_assistant.__main__ import MainWindow, configure_application
     from ai_japanese_interview_assistant.audio import Device
     from ai_japanese_interview_assistant.personal import PersonalInfo
+    from ai_japanese_interview_assistant.transcription import TranscriptPart
 
     monkeypatch.setattr(cloud_gui, "credential", lambda *args: "")
     device = Device(10, "示例播放设备", True, 48000, 2)
@@ -56,10 +57,15 @@ def test_saving_personal_info_supplies_the_next_session_without_extra_controls(m
         pane.background.setPlainText("测试简介")
         pane.navigation.button(1).click()
         pane.targets.add_button.click()
-        editors = pane.targets.cards[0].fields.editors
+        pane.targets.cards[0].fields.editors["role"].setText("其他测试岗位")
+        pane.targets.add_button.click()
+        pane.targets.cards[1].active.click()
+        editors = pane.targets.cards[1].fields.editors
         editors["company"].setText("示例会社")
         editors["role"].setText("电源研发工程师")
         editors["scenario"].setPlainText("技术一面")
+        translation = pane.preferences.editors["translation"]
+        translation.setCurrentIndex(translation.findData("off"))
         saved = pane.current()
         assert pane.save.isVisible() and pane.save.isEnabled()
         assert pane.save.objectName() == "primaryAction"
@@ -79,6 +85,11 @@ def test_saving_personal_info_supplies_the_next_session_without_extra_controls(m
         cloud.start.click()
         assert sessions == [saved]
         assert cloud.approved_personal == saved
+        assert cloud.worker.subtitle_language == "zh" and cloud.worker.answer_translation_language == ""
+        part = TranscriptPart("question", "模擬の質問", final=True)
+        key = (cloud.session_id, cloud.generation, part.item_id)
+        cloud.add_transcript((key, part))
+        assert cloud.rows[key].translation_language == "zh" and cloud.rows[key].answer_translation_language == ""
         window.tabs.setCurrentWidget(pane)
         assert cloud.state == "active"
         assert not pane.save.isEnabled()
@@ -100,13 +111,17 @@ def test_saving_personal_info_supplies_the_next_session_without_extra_controls(m
     reopened.show()
     try:
         wait(app, lambda: reopened.personal.loaded)
-        assert reopened.personal.targets.cards[0].fields.editors["company"].text() == "示例会社"
+        assert reopened.personal.targets.cards[1].active.isChecked()
+        assert reopened.personal.targets.cards[1].fields.editors["company"].text() == "示例会社"
         assert "Sample project" in reopened.personal.resume.toPlainText()
         assert reopened.cloud.saved_personal == saved
         assert reopened.cloud.approved_personal == PersonalInfo()
-        reopened.personal.targets.remove(reopened.personal.targets.cards[0])
+        for card in list(reopened.personal.targets.cards):
+            reopened.personal.targets.remove(card)
         reopened.personal.resume.clear()
         reopened.personal.background.clear()
+        translation = reopened.personal.preferences.editors["translation"]
+        translation.setCurrentIndex(translation.findData(""))
         reopened.personal.save.click()
         wait(app, lambda: reopened.personal.worker is None)
         assert reopened.cloud.saved_personal == PersonalInfo()
@@ -115,23 +130,33 @@ def test_saving_personal_info_supplies_the_next_session_without_extra_controls(m
         wait(app, lambda: not reopened.isVisible())
 
 
-def test_pdf_import_fills_editable_education_and_project_fields(tmp_path, monkeypatch):
+@pytest.mark.parametrize("lines,school,title,task,tool", [
+    (("Name: Example Candidate", "Education", "School: Example University", "Major: Electronics",
+      "Projects", "Project name: Converter test", "Responsibilities: Measured ripple", "Tools: Oscilloscope"),
+     "Example University", "Converter test", "Measured ripple", "Oscilloscope"),
+    (("姓名：示例同学", "教育经历", "学校：示例大学", "专业：电子信息工程",
+      "项目经历", "项目名称：电源测试", "个人职责：测量输出纹波", "使用工具：示波器"),
+     "示例大学", "电源测试", "测量输出纹波", "示波器"),
+    (("氏名：山田テスト", "学歴", "学校名：サンプル大学", "専攻：電子工学", "プロジェクト経験",
+      "プロジェクト名：電源評価", "担当：リップルを測定", "使用技術：オシロスコープ"),
+     "サンプル大学", "電源評価", "リップルを測定", "オシロスコープ"),
+], ids=("English", "Chinese", "Japanese"))
+def test_pdf_import_fills_editable_education_and_project_fields(tmp_path, monkeypatch, lines, school, title, task, tool):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     from PySide6.QtGui import QFont, QPainter, QPdfWriter
     from PySide6.QtWidgets import QApplication, QFileDialog
+    from ai_japanese_interview_assistant.__main__ import configure_application
     from ai_japanese_interview_assistant.personal import PersonalStore
     from ai_japanese_interview_assistant.personal_gui import PersonalPane
 
     app = QApplication.instance() or QApplication([])
+    configure_application(app)
     path = tmp_path / "synthetic.pdf"
     pdf = QPdfWriter(str(path))
     pdf.setResolution(72)
     painter = QPainter(pdf)
-    painter.setFont(QFont("Arial", 11))
-    for line, text in enumerate((
-        "Name: Example Candidate", "Education", "School: Example University", "Major: Electronics",
-        "Projects", "Project name: Converter test", "Responsibilities: Measured ripple", "Tools: Oscilloscope",
-    )):
+    painter.setFont(QFont("Microsoft YaHei UI", 12))
+    for line, text in enumerate(lines):
         painter.drawText(25, 45 + 20 * line, text)
     painter.end()
     del pdf
@@ -145,10 +170,10 @@ def test_pdf_import_fills_editable_education_and_project_fields(tmp_path, monkey
         pane.import_button.click()
         wait(app, lambda: pane.worker is None)
         assert pane.basics.editors["name"].text() == "Manually entered"
-        assert pane.education.cards[0].fields.editors["school"].text() == "Example University"
+        assert pane.education.cards[0].fields.editors["school"].text() == school
         project = pane.experiences.cards[0].fields.editors
-        assert project["responsibilities"].toPlainText() == "Measured ripple"
-        assert project["tools"].text() == "Oscilloscope"
+        assert project["responsibilities"].toPlainText() == task
+        assert project["tools"].text() == tool
         assert not PersonalStore().load()
 
         project["tools"].setText("Scope and electronic load")
@@ -158,6 +183,6 @@ def test_pdf_import_fills_editable_education_and_project_fields(tmp_path, monkey
         assert pane.current().experiences[0].tools == "Scope and electronic load"
         pane.save.click()
         wait(app, lambda: pane.worker is None)
-        assert PersonalStore().load().experiences[0].title == "Converter test"
+        assert PersonalStore().load().experiences[0].title == title
     finally:
         pane.close()

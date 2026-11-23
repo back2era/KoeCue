@@ -83,12 +83,15 @@ class Row:
     language: str = DEFAULT_INTERVIEW_LANGUAGE
     translation_language: str | None = None
     answer_language: str | None = None
+    answer_translation_language: str | None = None
 
     def __post_init__(self):
         if self.translation_language is None:
             self.translation_language = DEFAULT_TRANSLATION_LANGUAGES[self.language]
         if self.answer_language is None:
             self.answer_language = self.language
+        if self.answer_translation_language is None:
+            self.answer_translation_language = self.translation_language
 
     @property
     def subtitle_language(self):
@@ -1037,6 +1040,7 @@ class CloudPane(QWidget):
             asr="转写失败" if part.failed else f"{INTERVIEW_LANGUAGES[language]}定稿",
             translation_language=self.translation_language.currentData(),
             answer_language=self.answer_language.currentData(),
+            answer_translation_language=self.worker.answer_translation_language if self.worker else None,
         )
         self.mark_changed(key)
 
@@ -1090,8 +1094,8 @@ class CloudPane(QWidget):
         _, row = self.current_row()
         if row and row.answer:
             main = getattr(row.answer, row.answer_language)
-            translation = getattr(row.answer, row.translation_language, "")
-            parts = (main, translation) if row.translation_language != row.answer_language else (main,)
+            translation = getattr(row.answer, row.answer_translation_language, "")
+            parts = (main, translation) if row.answer_translation_language != row.answer_language else (main,)
             QApplication.clipboard().setText("\n\n".join(part for part in parts if part))
 
     def open_profile(self):
@@ -1366,7 +1370,8 @@ class CloudPane(QWidget):
             placeholder = (f"每段发言识别完成后会自动生成{name}回应建议。" if self.auto_answer.isChecked()
                            else f"选中字幕后可生成{name}参考回答。")
             self.answer_body.set_answer(placeholder)
-        translation = getattr(answer, row.translation_language, "") if answer and row.translation_language != language else ""
+        translation = (getattr(answer, row.answer_translation_language, "")
+                       if answer and row.answer_translation_language != language else "")
         self.answer_translation.setText(display_markdown(translation))
         self.answer_translation_rule.setVisible(bool(translation))
         self.answer_translation.setVisible(bool(translation))
